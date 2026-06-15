@@ -1,0 +1,1 @@
+﻿Um, so, tell me about a time you faced a challenge. Well, basically, I led a project where we had to rebuild the entire payment system. You know, the old project was really slow. I mean, the team was, like, frustrated. Uh, we actually shipped the new project in about three months, and honestly that project taught me a lot.
