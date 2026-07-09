@@ -23,6 +23,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _loading = false;
   String _statusMessage = '';
   bool _tipsLoading = false;
+  bool _showAllTopWords = false;
   late Recording _recording;
 
   @override
@@ -581,14 +582,11 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                           ),
                     ),
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: (_recording.topWords ?? [])
-                          .map((w) => Chip(
-                                label: Text('${w['word']} × ${w['count']}'),
-                              ))
-                          .toList(),
+                    _collapsibleWordChips(
+                      words: _recording.topWords ?? [],
+                      expanded: _showAllTopWords,
+                      onToggle: () => setState(
+                          () => _showAllTopWords = !_showAllTopWords),
                     ),
                   ],
                   if ((_recording.overusedWords ?? []).isNotEmpty) ...[
@@ -741,6 +739,35 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
           label,
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
+      ],
+    );
+  }
+
+  // Shows "word × count" chips, but collapses long lists behind a "…" chip so
+  // they don't take over the screen. Tapping it expands / collapses the rest.
+  Widget _collapsibleWordChips({
+    required List<Map<String, dynamic>> words,
+    required bool expanded,
+    required VoidCallback onToggle,
+    int limit = 8,
+  }) {
+    final collapsed = !expanded && words.length > limit;
+    final shown = collapsed ? words.take(limit).toList() : words;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final w in shown)
+          Chip(label: Text('${w['word']} × ${w['count']}')),
+        if (words.length > limit)
+          ActionChip(
+            avatar: Icon(
+              collapsed ? Icons.more_horiz : Icons.expand_less,
+              size: 18,
+            ),
+            label: Text(collapsed ? '+${words.length - limit}' : 'Show less'),
+            onPressed: onToggle,
+          ),
       ],
     );
   }

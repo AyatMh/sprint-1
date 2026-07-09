@@ -28,62 +28,147 @@ class _GoalsScreenState extends State<GoalsScreen> {
     });
   }
 
+  static const List<String> _dayNames = [
+    '', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+    'Saturday', 'Sunday',
+  ];
+
   Future<void> _setGoal(int value) async {
     final prefs = _prefs;
     if (prefs == null) return;
-    setState(() => prefs.weeklyGoal = value.clamp(1, 14));
+    setState(() => prefs.weeklyGoal = value.clamp(1, 99));
     await prefs.save();
   }
 
-  Future<void> _toggleReminder(bool on) async {
+  // Lets the user type an exact weekly goal instead of tapping +/-.
+  Future<void> _editGoalDialog() async {
     final prefs = _prefs;
     if (prefs == null) return;
-
-    if (on) {
-      final granted = await NotificationService.requestPermissions();
-      if (!granted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'Notifications are turned off for InterviewPro. Enable them in system settings.'),
-            ),
-          );
-        }
-        return;
-      }
-      await NotificationService.scheduleDailyReminder(
-        hour: prefs.reminderHour,
-        minute: prefs.reminderMinute,
-      );
-    } else {
-      await NotificationService.cancelReminder();
-    }
-
-    setState(() => prefs.reminderEnabled = on);
-    await prefs.save();
-  }
-
-  Future<void> _pickTime() async {
-    final prefs = _prefs;
-    if (prefs == null) return;
-    final picked = await showTimePicker(
+    final controller = TextEditingController(text: '${prefs.weeklyGoal}');
+    final value = await showDialog<int>(
       context: context,
-      initialTime:
-          TimeOfDay(hour: prefs.reminderHour, minute: prefs.reminderMinute),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Weekly goal'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Recordings per week',
+            suffixText: 'sessions',
+          ),
+          onSubmitted: (s) => Navigator.of(ctx).pop(int.tryParse(s.trim())),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(int.tryParse(controller.text.trim())),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
     );
-    if (picked == null) return;
-    setState(() {
-      prefs.reminderHour = picked.hour;
-      prefs.reminderMinute = picked.minute;
-    });
-    await prefs.save();
-    if (prefs.reminderEnabled) {
-      await NotificationService.scheduleDailyReminder(
-        hour: picked.hour,
-        minute: picked.minute,
-      );
+    if (value != null && value > 0) await _setGoal(value);
+  }
+
+  // Reschedules every reminder in the current list (or clears them all).
+  Future<void> _reschedule() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    await NotificationService.scheduleReminders(
+      prefs.reminders
+          .map((r) => (weekday: r.weekday, hour: r.hour, minute: r.minute))
+          .toList(),
+    );
+  }
+
+  Future<void> _addReminder() async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+
+    final granted = await NotificationService.requestPermissions();
+    if (!granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Notifications are turned off for InterviewPro. Enable them in system settings.'),
+          ),
+        );
+      }
+      return;
     }
+    if (!mounted) return;
+
+    final weekday = await _pickWeekday(DateTime.now().weekday);
+    if (weekday == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 19, minute: 0),
+    );
+    if (time == null) return;
+
+    setState(() => prefs.reminders.add(PracticeReminder(
+          weekday: weekday,
+          hour: time.hour,
+          minute: time.minute,
+        )));
+    await prefs.save();
+    await _reschedule();
+  }
+
+  Future<void> _editReminder(int index) async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    final current = prefs.reminders[index];
+
+    final weekday = await _pickWeekday(current.weekday);
+    if (weekday == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: current.hour, minute: current.minute),
+    );
+    if (time == null) return;
+
+    setState(() => prefs.reminders[index] = PracticeReminder(
+          weekday: weekday,
+          hour: time.hour,
+          minute: time.minute,
+        ));
+    await prefs.save();
+    await _reschedule();
+  }
+
+  Future<void> _deleteReminder(int index) async {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    setState(() => prefs.reminders.removeAt(index));
+    await prefs.save();
+    await _reschedule();
+  }
+
+  // Simple day-of-week chooser. Returns 1 (Mon) … 7 (Sun) or null.
+  Future<int?> _pickWeekday(int initial) {
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Which day?'),
+        children: [
+          for (var d = 1; d <= 7; d++)
+            ListTile(
+              title: Text(_dayNames[d]),
+              trailing: d == initial
+                  ? const Icon(Icons.check_rounded, color: AppColors.deepMauve)
+                  : null,
+              onTap: () => Navigator.of(ctx).pop(d),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -240,12 +325,28 @@ class _GoalsScreenState extends State<GoalsScreen> {
                 ),
               ),
               const Spacer(),
-              Text(
-                '$done / $goal',
-                style: TextStyle(
-                  color: reached ? AppColors.success : AppColors.wine,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+              // Tap the number to type an exact goal.
+              InkWell(
+                onTap: _editGoalDialog,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    children: [
+                      Text(
+                        '$done / $goal',
+                        style: TextStyle(
+                          color: reached ? AppColors.success : AppColors.wine,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.edit_outlined,
+                          size: 14, color: AppColors.midMauve),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -279,7 +380,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
                   onTap: goal > 1 ? () => _setGoal(goal - 1) : null),
               const SizedBox(width: 10),
               _stepButton(Icons.add_rounded,
-                  onTap: goal < 14 ? () => _setGoal(goal + 1) : null),
+                  onTap: goal < 99 ? () => _setGoal(goal + 1) : null),
             ],
           ),
         ],
@@ -308,8 +409,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   Widget _reminderCard() {
-    final prefs = _prefs!;
-    final time = TimeOfDay(hour: prefs.reminderHour, minute: prefs.reminderMinute);
+    final reminders = _prefs!.reminders;
     return GlassCard(
       radius: 24,
       padding: const EdgeInsets.all(20),
@@ -317,78 +417,100 @@ class _GoalsScreenState extends State<GoalsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: [
-              const Icon(Icons.notifications_active_rounded,
+            children: const [
+              Icon(Icons.notifications_active_rounded,
                   size: 18, color: AppColors.deepMauve),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Daily reminder',
-                  style: TextStyle(
-                    color: AppColors.wine,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
+              SizedBox(width: 8),
+              Text(
+                'Reminders',
+                style: TextStyle(
+                  color: AppColors.wine,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
-              ),
-              Switch(
-                value: prefs.reminderEnabled,
-                onChanged: _toggleReminder,
               ),
             ],
           ),
           const SizedBox(height: 4),
           const Text(
-            'Get a gentle nudge to practice at the same time every day.',
+            'Pick the day and time for each reminder. Each one repeats weekly.',
             style: TextStyle(
               color: AppColors.midMauve,
               fontSize: 12.5,
               height: 1.35,
             ),
           ),
-          if (prefs.reminderEnabled) ...[
-            const SizedBox(height: 14),
-            InkWell(
-              onTap: _pickTime,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
+          const SizedBox(height: 14),
+
+          if (reminders.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                'No reminders yet.',
+                style: TextStyle(color: AppColors.softMauve, fontSize: 13),
+              ),
+            )
+          else
+            for (var i = 0; i < reminders.length; i++) ...[
+              _reminderRow(i, reminders[i]),
+              const SizedBox(height: 8),
+            ],
+
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _addReminder,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add reminder'),
+              style: OutlinedButton.styleFrom(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.cardBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border, width: 0.8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.schedule_rounded,
-                        size: 18, color: AppColors.midMauve),
-                    const SizedBox(width: 10),
-                    const Text(
-                      'Reminder time',
-                      style: TextStyle(
-                        color: AppColors.wine,
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      time.format(context),
-                      style: const TextStyle(
-                        color: AppColors.deepMauve,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right_rounded,
-                        color: AppColors.softMauve, size: 20),
-                  ],
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                minimumSize: Size.zero,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reminderRow(int index, PracticeReminder r) {
+    final time = TimeOfDay(hour: r.hour, minute: r.minute);
+    return InkWell(
+      onTap: () => _editReminder(index),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border, width: 0.8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.schedule_rounded,
+                size: 18, color: AppColors.midMauve),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${_dayNames[r.weekday]} · ${time.format(context)}',
+                style: const TextStyle(
+                  color: AppColors.wine,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 20),
+              color: AppColors.midMauve,
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _deleteReminder(index),
+            ),
           ],
-        ],
+        ),
       ),
     );
   }

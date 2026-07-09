@@ -800,7 +800,16 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
     var scale = size.aspectRatio * controller.value.aspectRatio;
     if (scale < 1) scale = 1 / scale;
 
-    Widget preview = CameraPreview(controller);
+    // Build the preview ourselves and force a portrait-up orientation. The
+    // default CameraPreview follows `recordingOrientation`, which on some
+    // devices is reported as landscape once recording starts — rotating the
+    // whole preview 90°. Using the raw texture in a portrait aspect box keeps
+    // it upright regardless.
+    Widget preview = AspectRatio(
+      aspectRatio: 1 / controller.value.aspectRatio,
+      child: controller.buildPreview(),
+    );
+
     // Mirror the front camera horizontally so it reads like a mirror (the
     // natural "selfie" view) instead of appearing flipped/reversed.
     if (controller.description.lensDirection == CameraLensDirection.front) {

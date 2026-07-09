@@ -65,3 +65,5 @@ lib/firebase_options.dart
 
 # Local backups
 lib.zip
+# Local archives
+*.zip

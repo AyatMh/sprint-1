@@ -991,8 +991,7 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
   bool _editing = false;
   final Set<String> _selectedIds = {};
 
-  // Android-style in-app-bar search over recording names.
-  bool _searching = false;
+  // Always-visible search box over recording names.
   String _query = '';
   final TextEditingController _searchController = TextEditingController();
 
@@ -1009,14 +1008,46 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
   String _displayName(Recording r) =>
       r.name.trim().isNotEmpty ? r.name : _formatDate(r.createdAt);
 
-  void _enterSearch() => setState(() => _searching = true);
-
-  void _exitSearch() {
-    setState(() {
-      _searching = false;
-      _query = '';
-      _searchController.clear();
-    });
+  // Persistent search box shown at the top of the recordings list.
+  Widget _searchBox() {
+    return GlassCard(
+      radius: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: SizedBox(
+        height: 46,
+        child: Row(
+          children: [
+            const Icon(Icons.search_rounded,
+                size: 20, color: AppColors.midMauve),
+            const SizedBox(width: 9),
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: const InputDecoration(
+                  hintText: 'Search recordings',
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isCollapsed: true,
+                ),
+                style: const TextStyle(color: AppColors.wine, fontSize: 16),
+              ),
+            ),
+            if (_query.isNotEmpty)
+              GestureDetector(
+                onTap: () => setState(() {
+                  _query = '';
+                  _searchController.clear();
+                }),
+                child: const Icon(Icons.close_rounded,
+                    size: 20, color: AppColors.midMauve),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _toggleSelected(String id) {
@@ -1047,32 +1078,32 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
 
   // Title shown in the app bar while editing.
   String _editingTitle() =>
-      _selectedIds.isEmpty ? 'Select recordings' : '${_selectedIds.length} selected';
+      _selectedIds.isEmpty ? '' : '${_selectedIds.length} selected';
 
-  // Selects (or clears) every recording in this category. Used by the multi
-  // select purposes (move / average / delete).
-  Widget _selectAllAction(String userId, RecordingRepository repo) {
-    return TextButton(
-      child: const Text('Select all'),
-      onPressed: () async {
-        final all = await repo.watchRecordings(userId).first;
-        if (!mounted) return;
-        final ids = all
-            .where((r) => _categoryOf(r) == _category)
-            .map((r) => r.id)
-            .toList();
-        setState(() {
-          // Toggle: if everything is already picked, clear; otherwise pick all.
-          if (ids.isNotEmpty && _selectedIds.length == ids.length) {
-            _selectedIds.clear();
-          } else {
-            _selectedIds
-              ..clear()
-              ..addAll(ids);
-          }
-        });
-      },
-    );
+  // Selects or clears every recording currently shown in the category.
+  void _toggleSelectAll(List<Recording> recordings) {
+    setState(() {
+      if (recordings.isNotEmpty &&
+          _selectedIds.length == recordings.length) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds
+          ..clear()
+          ..addAll(recordings.map((r) => r.id));
+      }
+    });
+  }
+
+  // Renames the single selected recording (only enabled when exactly one is
+  // picked, since renaming can't apply to several at once).
+  Future<void> _renameSelected(String userId, RecordingRepository repo) async {
+    if (_selectedIds.length != 1) return;
+    final all = await repo.watchRecordings(userId).first;
+    if (!mounted) return;
+    final id = _selectedIds.first;
+    final match = all.where((r) => r.id == id);
+    if (match.isEmpty) return;
+    await _renameRecording(match.first);
   }
 
   // Contextual action-bar buttons shown at the top while editing. Every
@@ -1081,7 +1112,14 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
   List<Widget> _editingActions(String userId, RecordingRepository repo) {
     final hasSelection = _selectedIds.isNotEmpty;
     return [
-      _selectAllAction(userId, repo),
+      IconButton(
+        icon: const Icon(Icons.edit_outlined),
+        tooltip: 'Rename',
+        // Rename only makes sense for a single recording.
+        onPressed: _selectedIds.length == 1
+            ? () => _renameSelected(userId, repo)
+            : null,
+      ),
       IconButton(
         icon: const Icon(Icons.drive_file_move_outline),
         tooltip: 'Move to another category',
@@ -1335,62 +1373,15 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
       backgroundColor: AppColors.pageBg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: _editing
-            ? Text(_editingTitle())
-            : _searching
-                ? TextField(
-                    controller: _searchController,
-                    autofocus: true,
-                    onChanged: (v) => setState(() => _query = v),
-                    textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
-                      hintText: 'Search recordings',
-                      border: InputBorder.none,
-                      isCollapsed: true,
-                    ),
-                    style: const TextStyle(
-                      color: AppColors.wine,
-                      fontSize: 18,
-                    ),
-                  )
-                : Text(_category),
+        title: _editing ? Text(_editingTitle()) : Text(_category),
         leading: _editing
             ? IconButton(
                 icon: const Icon(Icons.close),
                 tooltip: 'Done',
                 onPressed: _exitEditing,
               )
-            : _searching
-                ? IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: 'Close search',
-                    onPressed: _exitSearch,
-                  )
-                : null,
-        actions: _editing
-            ? _editingActions(userId, repo)
-            : _searching
-                ? [
-                    if (_query.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        tooltip: 'Clear',
-                        onPressed: () => setState(() {
-                          _query = '';
-                          _searchController.clear();
-                        }),
-                      ),
-                  ]
-                : [
-                    // Renaming / deleting the category itself now lives on the
-                    // Recordings screen (long-press a folder). Here we only
-                    // search, and editing recordings starts with a long-press.
-                    IconButton(
-                      icon: const Icon(Icons.search),
-                      tooltip: 'Search recordings',
-                      onPressed: _enterSearch,
-                    ),
-                  ],
+            : null,
+        actions: _editing ? _editingActions(userId, repo) : null,
       ),
       body: Stack(
         children: [
@@ -1423,10 +1414,9 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                 );
               }
 
-              // While searching, filter by name and drop the stats header so
-              // only the matching recordings show.
+              // Filter by the search box (only when not editing).
               final q = _query.trim().toLowerCase();
-              final searchActive = _searching && q.isNotEmpty;
+              final searchActive = !_editing && q.isNotEmpty;
               final recordings = searchActive
                   ? all
                       .where(
@@ -1434,34 +1424,86 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                       .toList()
                   : all;
 
-              if (searchActive && recordings.isEmpty) {
-                return _EmptyState(
-                  icon: Icons.search_off_rounded,
-                  title: 'No matches',
-                  message: 'No recordings named like "$q" in this category.',
-                );
+              // Header rows: while editing show a labelled "Select all" toggle;
+              // otherwise show the search box and (unless searching) the stats.
+              final headers = <Widget>[];
+              if (_editing) {
+                headers.add(_selectAllRow(all));
+              } else {
+                headers.add(_searchBox());
+                if (!searchActive) {
+                  headers.add(SessionStatsCard(
+                    recordings: all,
+                    title: 'Category Averages',
+                  ));
+                }
               }
 
-              // Show the per-category stats summary first, but not while
-              // searching or editing recordings (keeps edit mode focused).
-              final showStats = !searchActive && !_editing;
+              // Keep the search box on screen even when nothing matches.
+              final noMatches = searchActive && recordings.isEmpty;
+
               return ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
-                itemCount: recordings.length + (showStats ? 1 : 0),
-                separatorBuilder: (_, i) =>
-                    SizedBox(height: showStats && i == 0 ? 18 : 10),
+                itemCount:
+                    headers.length + (noMatches ? 1 : recordings.length),
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (context, i) {
-                  if (showStats && i == 0) {
-                    return SessionStatsCard(
-                      recordings: recordings,
-                      title: 'Category Averages',
+                  if (i < headers.length) return headers[i];
+                  if (noMatches) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 40),
+                      child: _EmptyState(
+                        icon: Icons.search_off_rounded,
+                        title: 'No matches',
+                        message:
+                            'No recordings named like "$q" in this category.',
+                      ),
                     );
                   }
-                  final index = showStats ? i - 1 : i;
-                  return _buildRecordingCard(context, recordings[index]);
+                  return _buildRecordingCard(
+                      context, recordings[i - headers.length]);
                 },
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Clearly labelled "Select all" toggle shown at the top of the list while
+  // editing, so the action isn't hidden behind an ambiguous icon.
+  Widget _selectAllRow(List<Recording> recordings) {
+    final allSelected = recordings.isNotEmpty &&
+        _selectedIds.length == recordings.length;
+    return GlassCard(
+      radius: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      onTap: () => _toggleSelectAll(recordings),
+      child: Row(
+        children: [
+          Checkbox(
+            value: allSelected,
+            onChanged: (_) => _toggleSelectAll(recordings),
+          ),
+          Text(
+            allSelected ? 'Deselect all' : 'Select all',
+            style: const TextStyle(
+              color: AppColors.wine,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              '${_selectedIds.length} of ${recordings.length} selected',
+              style: const TextStyle(
+                color: AppColors.midMauve,
+                fontSize: 12.5,
+              ),
+            ),
           ),
         ],
       ),
@@ -1568,14 +1610,6 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
               ],
             ),
           ),
-          // In editing mode, a pencil next to each recording renames just it.
-          if (_editing)
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, size: 20),
-              tooltip: 'Rename recording',
-              color: AppColors.wine,
-              onPressed: () => _renameRecording(r),
-            ),
         ],
       ),
     );

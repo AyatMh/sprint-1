@@ -10,7 +10,9 @@ class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
-  static const int _dailyReminderId = 1001;
+  // Reminder notification ids live in [_baseId, _baseId + _maxReminders).
+  static const int _baseId = 2000;
+  static const int _maxReminders = 21;
   static bool _ready = false;
 
   // Sets up timezones and the plugin. Safe to call once at startup.
@@ -59,45 +61,68 @@ class NotificationService {
     return granted;
   }
 
-  // (Re)schedules a reminder that repeats every day at [hour]:[minute].
-  static Future<void> scheduleDailyReminder({
-    required int hour,
-    required int minute,
-  }) async {
+  // Replaces all scheduled reminders with the given ones. Each fires weekly on
+  // its weekday (1=Mon … 7=Sun) at its hour:minute. Passing an empty list just
+  // cancels everything.
+  static Future<void> scheduleReminders(
+    List<({int weekday, int hour, int minute})> reminders,
+  ) async {
     await init();
-    await cancelReminder();
+    await cancelAllReminders();
 
-    await _plugin.zonedSchedule(
-      id: _dailyReminderId,
-      title: 'Time to practice 🎤',
-      body:
-          "Keep your streak going — record a quick answer and see how you're improving.",
-      scheduledDate: _nextInstanceOf(hour, minute),
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'practice_reminders',
-          'Practice reminders',
-          channelDescription: 'Daily reminders to practice interviews',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-        iOS: DarwinNotificationDetails(),
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'practice_reminders',
+        'Practice reminders',
+        channelDescription: 'Reminders to practice interviews',
+        importance: Importance.high,
+        priority: Priority.high,
       ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time, // repeat daily
+      iOS: DarwinNotificationDetails(),
     );
-  }
 
-  static Future<void> cancelReminder() async {
-    try {
-      await _plugin.cancel(id: _dailyReminderId);
-    } catch (e) {
-      debugPrint('cancelReminder failed: $e');
+    final count = reminders.length.clamp(0, _maxReminders);
+    for (var i = 0; i < count; i++) {
+      final r = reminders[i];
+      await _plugin.zonedSchedule(
+        id: _baseId + i,
+        title: 'Time to practice 🎤',
+        body:
+            "Keep your streak going — record a quick answer and see how you're improving.",
+        scheduledDate: _nextInstanceOfWeekday(r.weekday, r.hour, r.minute),
+        notificationDetails: details,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        matchDateTimeComponents:
+            DateTimeComponents.dayOfWeekAndTime, // repeat weekly
+      );
     }
   }
 
-  // The next occurrence of hour:minute in local time, tomorrow if already past.
-  static tz.TZDateTime _nextInstanceOf(int hour, int minute) {
+  static Future<void> cancelAllReminders() async {
+    for (var i = 0; i < _maxReminders; i++) {
+      try {
+        await _plugin.cancel(id: _baseId + i);
+      } catch (e) {
+        debugPrint('cancelReminder $i failed: $e');
+      }
+    }
+    // Clear the legacy single daily reminder id from older builds.
+    try {
+      await _plugin.cancel(id: 1001);
+    } catch (_) {}
+  }
+
+  // Next occurrence of [weekday] at hour:minute in local time.
+  static tz.TZDateTime _nextInstanceOfWeekday(int weekday, int hour, int minute) {
+    var scheduled = _nextInstanceOfTime(hour, minute);
+    while (scheduled.weekday != weekday) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    return scheduled;
+  }
+
+  // Next occurrence of hour:minute in local time, tomorrow if already past.
+  static tz.TZDateTime _nextInstanceOfTime(int hour, int minute) {
     final now = tz.TZDateTime.now(tz.local);
     var scheduled =
         tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);

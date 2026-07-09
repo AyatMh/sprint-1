@@ -1,39 +1,66 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Device-local settings for the practice goals & reminder feature.
+// A single practice reminder: fires weekly on [weekday] at [hour]:[minute].
+class PracticeReminder {
+  final int weekday; // 1 = Monday … 7 = Sunday (matches DateTime.weekday)
+  final int hour;
+  final int minute;
+
+  const PracticeReminder({
+    required this.weekday,
+    required this.hour,
+    required this.minute,
+  });
+
+  Map<String, dynamic> toMap() =>
+      {'weekday': weekday, 'hour': hour, 'minute': minute};
+
+  factory PracticeReminder.fromMap(Map<String, dynamic> m) => PracticeReminder(
+        weekday: (m['weekday'] ?? 1) as int,
+        hour: (m['hour'] ?? 19) as int,
+        minute: (m['minute'] ?? 0) as int,
+      );
+}
+
+// Device-local settings for the practice goals & reminders feature.
 class GoalsPrefs {
   static const _kWeeklyGoal = 'goals_weekly_target';
-  static const _kReminderOn = 'goals_reminder_enabled';
-  static const _kReminderHour = 'goals_reminder_hour';
-  static const _kReminderMinute = 'goals_reminder_minute';
+  static const _kReminders = 'goals_reminders_json';
 
   int weeklyGoal;
-  bool reminderEnabled;
-  int reminderHour;
-  int reminderMinute;
+  List<PracticeReminder> reminders;
 
-  GoalsPrefs({
-    required this.weeklyGoal,
-    required this.reminderEnabled,
-    required this.reminderHour,
-    required this.reminderMinute,
-  });
+  GoalsPrefs({required this.weeklyGoal, required this.reminders});
 
   static Future<GoalsPrefs> load() async {
     final p = await SharedPreferences.getInstance();
+
+    final reminders = <PracticeReminder>[];
+    final raw = p.getString(_kReminders);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        for (final e in jsonDecode(raw) as List) {
+          reminders.add(PracticeReminder.fromMap(Map<String, dynamic>.from(e)));
+        }
+      } catch (_) {
+        // Corrupt/older value — start with no reminders.
+      }
+    }
+
     return GoalsPrefs(
       weeklyGoal: p.getInt(_kWeeklyGoal) ?? 5,
-      reminderEnabled: p.getBool(_kReminderOn) ?? false,
-      reminderHour: p.getInt(_kReminderHour) ?? 19,
-      reminderMinute: p.getInt(_kReminderMinute) ?? 0,
+      reminders: reminders,
     );
   }
 
   Future<void> save() async {
     final p = await SharedPreferences.getInstance();
     await p.setInt(_kWeeklyGoal, weeklyGoal);
-    await p.setBool(_kReminderOn, reminderEnabled);
-    await p.setInt(_kReminderHour, reminderHour);
-    await p.setInt(_kReminderMinute, reminderMinute);
+    await p.setString(
+      _kReminders,
+      jsonEncode(reminders.map((r) => r.toMap()).toList()),
+    );
   }
 }
