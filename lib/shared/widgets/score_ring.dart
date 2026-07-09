@@ -6,16 +6,19 @@ class ScoreRing extends StatelessWidget {
   final int score; // 0-100
   final String label;
   final double size;
+  final Color? color; // arc + number tint; defaults to the neutral mauve
 
   const ScoreRing({
     super.key,
     required this.score,
     this.label = 'OVERALL',
     this.size = 104,
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tint = color ?? AppColors.midMauve;
     return SizedBox(
       width: size,
       height: size,
@@ -24,17 +27,17 @@ class ScoreRing extends StatelessWidget {
         children: [
           CustomPaint(
             size: Size(size, size),
-            painter: _RingPainter(score / 100),
+            painter: _RingPainter(score / 100, tint),
           ),
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 '$score',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 28,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.wine,
+                  fontWeight: FontWeight.w700,
+                  color: tint,
                   height: 1,
                 ),
               ),
@@ -57,7 +60,8 @@ class ScoreRing extends StatelessWidget {
 
 class _RingPainter extends CustomPainter {
   final double progress; // 0-1
-  _RingPainter(this.progress);
+  final Color tint;
+  _RingPainter(this.progress, this.tint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -71,7 +75,7 @@ class _RingPainter extends CustomPainter {
       ..strokeWidth = stroke;
 
     final fill = Paint()
-      ..color = AppColors.midMauve
+      ..color = tint
       ..style = PaintingStyle.stroke
       ..strokeWidth = stroke
       ..strokeCap = StrokeCap.round;
@@ -87,5 +91,6 @@ class _RingPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_RingPainter old) => old.progress != progress;
+  bool shouldRepaint(_RingPainter old) =>
+      old.progress != progress || old.tint != tint;
 }

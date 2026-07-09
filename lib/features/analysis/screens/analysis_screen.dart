@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../data/models/recording.dart';
 import '../../../data/repositories/recording_repository.dart';
+import '../../../data/services/ai_tips_service.dart';
 import '../../../data/services/filler_word_analyzer.dart';
 import '../../../data/services/silence_analyzer.dart';
 import '../../../data/services/transcription_service.dart';
@@ -21,12 +22,50 @@ class AnalysisScreen extends StatefulWidget {
 class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _loading = false;
   String _statusMessage = '';
+  bool _tipsLoading = false;
   late Recording _recording;
 
   @override
   void initState() {
     super.initState();
     _recording = widget.recording;
+  }
+
+  // Sends the recording's analysis to the AI coach and stores the returned
+  // tips (persisted to Firestore so they aren't regenerated every visit).
+  Future<void> _generateTips() async {
+    final userId = context.read<AuthProvider>().user?.uid;
+    if (userId == null) return;
+
+    setState(() => _tipsLoading = true);
+    try {
+      final result = await AiTipsService().generateTips(_recording);
+      final tipsMap = result.toMap();
+
+      await RecordingRepository().updateAiTips(
+        userId: userId,
+        recordingId: _recording.id,
+        tips: tipsMap,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _recording = _recording.copyWith(
+          aiTips: tipsMap,
+          aiTipsAt: DateTime.now(),
+        );
+        _tipsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _tipsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not get AI tips: $e'),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
   }
 
   Future<void> _transcribe() async {
@@ -212,6 +251,159 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
+  // ============ AI COACHING TIPS CARD ============
+  Widget _buildAiTipsCard() {
+    final tips = _recording.hasAiTips
+        ? AiTipsResult.fromMap(_recording.aiTips!)
+        : null;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: AppColors.wine),
+                const SizedBox(width: 8),
+                Text(
+                  'AI coaching tips',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Spacer(),
+                if (tips != null && !_tipsLoading)
+                  TextButton.icon(
+                    onPressed: _generateTips,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Regenerate'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            if (_tipsLoading) ...[
+              const SizedBox(height: 8),
+              const Center(child: CircularProgressIndicator()),
+              const SizedBox(height: 12),
+              const Center(
+                child: Text(
+                  'Asking the AI coach to review your session…',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.midMauve),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ] else if (tips == null) ...[
+              const Text(
+                'Get personalized feedback on this recording: what you did '
+                'well, what to work on, and concrete tips to improve next time.',
+                style: TextStyle(color: AppColors.midMauve, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _generateTips,
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('Get AI coaching tips'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ] else ...[
+              if (tips.summary.isNotEmpty) ...[
+                Text(
+                  tips.summary,
+                  style: const TextStyle(
+                    color: AppColors.wine,
+                    fontSize: 15,
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              _tipsSection(
+                'What went well',
+                Icons.check_circle_outline,
+                Colors.green.shade600,
+                tips.strengths,
+              ),
+              _tipsSection(
+                'What to work on',
+                Icons.trending_up_rounded,
+                Colors.orange.shade700,
+                tips.improvements,
+              ),
+              _tipsSection(
+                'Tips for next time',
+                Icons.lightbulb_outline,
+                AppColors.deepMauve,
+                tips.tips,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // One titled group of bullet points inside the AI tips card.
+  Widget _tipsSection(
+    String title,
+    IconData icon,
+    Color color,
+    List<String> items,
+  ) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('•  ',
+                      style: TextStyle(color: AppColors.midMauve)),
+                  Expanded(
+                    child: Text(
+                      item,
+                      style: const TextStyle(
+                        color: AppColors.wine,
+                        fontSize: 14,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyView() {
     return Center(
       child: Padding(
@@ -292,6 +484,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
           ),
+          const SizedBox(height: 16),
+
+          // ============ AI COACHING TIPS ============
+          _buildAiTipsCard(),
           const SizedBox(height: 16),
 
           // ============ FILLER WORDS CARD ============

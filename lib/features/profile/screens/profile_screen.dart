@@ -6,6 +6,7 @@ import '../../../data/models/recording.dart';
 import '../../../data/repositories/recording_repository.dart';
 import '../../../shared/widgets/glass.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../goals/goals_screen.dart';
 import 'settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -354,6 +355,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.person_rounded,
                     title: 'Edit Profile',
                     onTap: () => _editProfile(user),
+                  ),
+                  const Divider(
+                    height: 1,
+                    thickness: 0.5,
+                    indent: 60,
+                    color: AppColors.separator,
+                  ),
+                  _setRow(
+                    colors: const [Color(0xFFFF9F0A), Color(0xFFFF6B00)],
+                    icon: Icons.local_fire_department_rounded,
+                    title: 'Practice goals',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const GoalsScreen()),
+                    ),
                   ),
                   const Divider(
                     height: 1,

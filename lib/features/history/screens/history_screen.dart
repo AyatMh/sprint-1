@@ -56,6 +56,208 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  // Android-style contextual editing for the category folders: long-press a
+  // folder to enter, then rename (single) or delete (one or more) from the top.
+  bool _editing = false;
+  final Set<String> _selectedCategories = {};
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _enterCategoryEditing(String category) {
+    setState(() {
+      _editing = true;
+      _selectedCategories
+        ..clear()
+        ..add(category);
+    });
+  }
+
+  void _exitCategoryEditing() {
+    setState(() {
+      _editing = false;
+      _selectedCategories.clear();
+    });
+  }
+
+  void _toggleCategory(String category) {
+    setState(() {
+      if (_selectedCategories.contains(category)) {
+        _selectedCategories.remove(category);
+      } else {
+        _selectedCategories.add(category);
+      }
+    });
+  }
+
+  // Renames the single selected category by re-tagging every recording in it.
+  Future<void> _renameCategory(
+    String userId,
+    RecordingRepository repo,
+    Map<String, List<Recording>> groups,
+  ) async {
+    if (_selectedCategories.length != 1) return;
+    final category = _selectedCategories.first;
+    final controller = TextEditingController(text: category);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename category'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(labelText: 'Category name'),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == category) return;
+    final ids = (groups[category] ?? []).map((r) => r.id).toList();
+    await repo.setCategoryForRecordings(userId, ids, newName);
+    if (mounted) _exitCategoryEditing();
+  }
+
+  // Merges the selected categories into one: every recording across them is
+  // re-tagged to a single target name (kept from the selection, or a new one).
+  Future<void> _mergeCategories(
+    String userId,
+    RecordingRepository repo,
+    Map<String, List<Recording>> groups,
+  ) async {
+    if (_selectedCategories.length < 2) return;
+    final cats = _selectedCategories.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final controller = TextEditingController(text: cats.first);
+    final target = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Merge ${cats.length} categories'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'All recordings from ${cats.join(', ')} will be combined into '
+              'one category.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration:
+                  const InputDecoration(labelText: 'Merged category name'),
+              onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Merge'),
+          ),
+        ],
+      ),
+    );
+    if (target == null || target.isEmpty) return;
+    final ids = <String>[
+      for (final c in cats) ...(groups[c] ?? []).map((r) => r.id),
+    ];
+    await repo.setCategoryForRecordings(userId, ids, target);
+    if (!mounted) return;
+    _exitCategoryEditing();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Merged ${cats.length} categories into "$target"'),
+      ),
+    );
+  }
+
+  // Deletes every selected category: removes all their recordings (local
+  // files, Storage copies, and Firestore docs).
+  Future<void> _deleteCategories(
+    String userId,
+    RecordingRepository repo,
+    Map<String, List<Recording>> groups,
+  ) async {
+    if (_selectedCategories.isEmpty) return;
+    final cats = _selectedCategories.toList();
+    final toDelete = <Recording>[
+      for (final c in cats) ...(groups[c] ?? []),
+    ];
+    final catCount = cats.length;
+    final recCount = toDelete.length;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          'Delete $catCount categor${catCount == 1 ? 'y' : 'ies'}?',
+        ),
+        content: Text(
+          'This will permanently delete all $recCount recording'
+          '${recCount == 1 ? '' : 's'} in '
+          '${catCount == 1 ? 'this category' : 'these categories'}, including '
+          'their video files. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    for (final r in toDelete) {
+      try {
+        final file = File(r.localPath);
+        if (await file.exists()) await file.delete();
+        final storagePath = r.storagePath;
+        if (storagePath != null && storagePath.isNotEmpty) {
+          try {
+            await FirebaseStorage.instance.ref(storagePath).delete();
+          } catch (_) {
+            // Already gone or never finished uploading — nothing to clean.
+          }
+        }
+        await repo.deleteRecording(userId, r.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Delete failed: $e')),
+          );
+        }
+      }
+    }
+    if (mounted) _exitCategoryEditing();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,8 +271,27 @@ class _HistoryScreenState extends State<HistoryScreen> {
       );
     }
 
-    return Scaffold(
+    return PopScope(
+      // While editing categories, the Android back button exits editing
+      // instead of leaving the Recordings tab.
+      canPop: !_editing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _exitCategoryEditing();
+      },
+      child: Scaffold(
       backgroundColor: Colors.transparent,
+      // Android-style FAB, lifted above the floating tab bar.
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 96),
+        child: FloatingActionButton(
+          onPressed: () => startPracticeSession(context),
+          backgroundColor: AppColors.wine,
+          foregroundColor: Colors.white,
+          elevation: 4,
+          child: const Icon(Icons.add_rounded, size: 28),
+        ),
+      ),
       body: SafeArea(
         bottom: false,
         child: StreamBuilder<List<Recording>>(
@@ -98,77 +319,138 @@ class _HistoryScreenState extends State<HistoryScreen> {
               groups.putIfAbsent(_categoryOf(r), () => []).add(r);
             }
             final q = _query.trim().toLowerCase();
-            final categories = groups.keys
-                .where((c) => q.isEmpty || c.toLowerCase().contains(q))
-                .toList()
+            // A category matches if its own name matches, or if any recording
+            // inside it is named like the query.
+            bool matchesQuery(String cat) {
+              if (q.isEmpty) return true;
+              if (cat.toLowerCase().contains(q)) return true;
+              return groups[cat]!.any((r) {
+                final name = r.name.trim().isNotEmpty
+                    ? r.name
+                    : _formatDate(r.createdAt);
+                return name.toLowerCase().contains(q);
+              });
+            }
+
+            final categories = groups.keys.where(matchesQuery).toList()
               ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 140),
               children: [
-                // ===== Header =====
+                // ===== Header (contextual action bar while editing) =====
                 Padding(
                   padding: const EdgeInsets.fromLTRB(4, 0, 4, 16),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Recordings',
-                          style: TextStyle(
-                            color: AppColors.wine,
-                            fontSize: 34,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.7,
-                          ),
+                  child: _editing
+                      ? Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.close,
+                                  color: AppColors.wine),
+                              tooltip: 'Done',
+                              onPressed: _exitCategoryEditing,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _selectedCategories.isEmpty
+                                    ? 'Select categories'
+                                    : '${_selectedCategories.length} selected',
+                                style: const TextStyle(
+                                  color: AppColors.wine,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.4,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined,
+                                  color: AppColors.wine),
+                              tooltip: 'Rename category',
+                              onPressed: _selectedCategories.length == 1
+                                  ? () => _renameCategory(userId, repo, groups)
+                                  : null,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.merge_type_rounded,
+                                  color: AppColors.wine),
+                              tooltip: 'Merge categories',
+                              onPressed: _selectedCategories.length >= 2
+                                  ? () => _mergeCategories(userId, repo, groups)
+                                  : null,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  color: AppColors.wine),
+                              tooltip: 'Delete',
+                              onPressed: _selectedCategories.isEmpty
+                                  ? null
+                                  : () =>
+                                      _deleteCategories(userId, repo, groups),
+                            ),
+                          ],
+                        )
+                      : const Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Recordings',
+                                style: TextStyle(
+                                  color: AppColors.wine,
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.7,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      GlassCard(
-                        radius: 22,
-                        padding: EdgeInsets.zero,
-                        onTap: () => startPracticeSession(context),
-                        child: const SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: Icon(Icons.add_rounded,
-                              color: AppColors.wine, size: 22),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
 
-                // ===== Search =====
-                GlassCard(
-                  radius: 23,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox(
-                    height: 46,
-                    child: Row(
-                      children: [
-                        const Icon(Icons.search_rounded,
-                            size: 20, color: AppColors.midMauve),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: TextField(
-                            onChanged: (v) => setState(() => _query = v),
-                            decoration: const InputDecoration(
-                              hintText: 'Search sessions',
-                              filled: false,
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              isCollapsed: true,
-                            ),
-                            style: const TextStyle(
-                              color: AppColors.wine,
-                              fontSize: 16,
+                // ===== Search (hidden while editing categories) =====
+                if (!_editing)
+                  GlassCard(
+                    radius: 23,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: SizedBox(
+                      height: 46,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.search_rounded,
+                              size: 20, color: AppColors.midMauve),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              onChanged: (v) => setState(() => _query = v),
+                              decoration: const InputDecoration(
+                                hintText: 'Search categories',
+                                filled: false,
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                isCollapsed: true,
+                              ),
+                              style: const TextStyle(
+                                color: AppColors.wine,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                          if (_query.isNotEmpty)
+                            GestureDetector(
+                              onTap: () => setState(() {
+                                _query = '';
+                                _searchController.clear();
+                              }),
+                              child: const Icon(Icons.close_rounded,
+                                  size: 20, color: AppColors.midMauve),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
 
                 if (recordings.isEmpty)
                   const Padding(
@@ -181,70 +463,103 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ),
                   )
                 else ...[
-                  // ===== Analyze / Compare actions =====
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _TopAction(
-                          icon: Icons.analytics_rounded,
-                          label: 'Analyze',
-                          colors: const [Color(0xFF0A84FF), Color(0xFF0E60C8)],
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const AnalyzeScreen(),
+                  // ===== Analyze / Compare actions (hidden while editing) =====
+                  if (!_editing) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TopAction(
+                            icon: Icons.analytics_rounded,
+                            label: 'Analyze',
+                            colors: const [
+                              Color(0xFF0A84FF),
+                              Color(0xFF0E60C8)
+                            ],
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const AnalyzeScreen(),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _TopAction(
-                          icon: Icons.compare_arrows_rounded,
-                          label: 'Compare',
-                          colors: const [Color(0xFF5E6AD2), Color(0xFF3B43A0)],
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const CompareSelectScreen(),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _TopAction(
+                            icon: Icons.compare_arrows_rounded,
+                            label: 'Compare',
+                            colors: const [
+                              Color(0xFF5E6AD2),
+                              Color(0xFF3B43A0)
+                            ],
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const CompareSelectScreen(),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                  ],
 
                   // ===== Folders =====
                   const SizedBox(height: 16),
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1.18,
-                    children: [
-                      for (var i = 0; i < categories.length; i++)
-                        _FolderCard(
-                          category: categories[i],
-                          count: groups[categories[i]]!.length,
-                          colors: _tileGradients[i % _tileGradients.length],
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => CategoryRecordingsScreen(
-                                  category: categories[i],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
+                  if (categories.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 40),
+                      child: _EmptyState(
+                        icon: Icons.search_off_rounded,
+                        title: 'No matching categories',
+                        message:
+                            'No category or recording matches your search.',
+                      ),
+                    )
+                  else
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.18,
+                      children: [
+                        for (var i = 0; i < categories.length; i++)
+                          _FolderCard(
+                            category: categories[i],
+                            count: groups[categories[i]]!.length,
+                            colors: _tileGradients[i % _tileGradients.length],
+                            selected: _editing &&
+                                _selectedCategories.contains(categories[i]),
+                            onTap: () {
+                              // In editing mode a tap toggles selection;
+                              // otherwise it opens the category.
+                              if (_editing) {
+                                _toggleCategory(categories[i]);
+                              } else {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => CategoryRecordingsScreen(
+                                      category: categories[i],
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            // Long-press a folder to enter Android-style
+                            // editing for the categories, selecting this one.
+                            onLongPress: _editing
+                                ? null
+                                : () => _enterCategoryEditing(categories[i]),
+                          ),
+                      ],
+                    ),
                 ],
               ],
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -255,12 +570,16 @@ class _FolderCard extends StatelessWidget {
   final int count;
   final List<Color> colors;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final bool selected;
 
   const _FolderCard({
     required this.category,
     required this.count,
     required this.colors,
     required this.onTap,
+    this.onLongPress,
+    this.selected = false,
   });
 
   @override
@@ -269,51 +588,64 @@ class _FolderCard extends StatelessWidget {
       radius: 26,
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      onLongPress: onLongPress,
+      child: Stack(
         children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: colors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(17),
-              boxShadow: [
-                BoxShadow(
-                  color: colors.first.withValues(alpha: 0.55),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                  spreadRadius: -10,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: colors,
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(17),
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors.first.withValues(alpha: 0.55),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                      spreadRadius: -10,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: const Icon(Icons.folder_rounded,
-                color: Colors.white, size: 26),
+                child: const Icon(Icons.folder_rounded,
+                    color: Colors.white, size: 26),
+              ),
+              const Spacer(),
+              Text(
+                category,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.wine,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '$count session${count == 1 ? '' : 's'}',
+                style: const TextStyle(
+                  color: AppColors.midMauve,
+                  fontSize: 13,
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Text(
-            category,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppColors.wine,
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
+          // Selection badge shown while editing categories.
+          if (selected)
+            const Positioned(
+              top: 0,
+              right: 0,
+              child: Icon(Icons.check_circle_rounded,
+                  color: AppColors.wine, size: 24),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '$count session${count == 1 ? '' : 's'}',
-            style: const TextStyle(
-              color: AppColors.midMauve,
-              fontSize: 13,
-            ),
-          ),
         ],
       ),
     );
@@ -636,15 +968,16 @@ class _CategoryMultiSelectSheetState extends State<_CategoryMultiSelectSheet> {
 // Inside a folder: stats summary + the recordings of one category.
 // ============================================================================
 
-// What the user is selecting recordings for. Selection is started from the
-// category's top menu, so the purpose decides how many can be picked and what
-// the confirm action does.
-enum _SelectAction { rename, move, average, delete }
-
+// Shows the recordings inside one category. Recording-level editing (rename /
+// move / delete / average) starts by long-pressing a recording; category-level
+// rename and delete live on the Recordings screen instead.
 class CategoryRecordingsScreen extends StatefulWidget {
   final String category;
 
-  const CategoryRecordingsScreen({super.key, required this.category});
+  const CategoryRecordingsScreen({
+    super.key,
+    required this.category,
+  });
 
   @override
   State<CategoryRecordingsScreen> createState() =>
@@ -652,28 +985,42 @@ class CategoryRecordingsScreen extends StatefulWidget {
 }
 
 class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
-  _SelectAction? _selectAction;
+  // Android-style contextual editing mode: long-press a recording to enter,
+  // then multi-select to move / delete / average, or tap a card's pencil to
+  // rename that single recording.
+  bool _editing = false;
   final Set<String> _selectedIds = {};
 
-  bool get _selectionMode => _selectAction != null;
+  // Android-style in-app-bar search over recording names.
+  bool _searching = false;
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
 
-  // The folder's category, held in state so it can be renamed in place.
-  late String _category = widget.category;
+  // The folder's category. Renaming now happens from the Recordings screen.
+  late final String _category = widget.category;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // The label a recording is searched/shown by (its name, or its date).
+  String _displayName(Recording r) =>
+      r.name.trim().isNotEmpty ? r.name : _formatDate(r.createdAt);
+
+  void _enterSearch() => setState(() => _searching = true);
+
+  void _exitSearch() {
+    setState(() {
+      _searching = false;
+      _query = '';
+      _searchController.clear();
+    });
+  }
 
   void _toggleSelected(String id) {
     setState(() {
-      // Renaming acts on a single recording, so picking one replaces any
-      // previous pick instead of accumulating.
-      if (_selectAction == _SelectAction.rename) {
-        if (_selectedIds.contains(id)) {
-          _selectedIds.clear();
-        } else {
-          _selectedIds
-            ..clear()
-            ..add(id);
-        }
-        return;
-      }
       if (_selectedIds.contains(id)) {
         _selectedIds.remove(id);
       } else {
@@ -682,42 +1029,25 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     });
   }
 
-  // Starts selection mode for a given purpose, picked from the top menu.
-  void _startSelection(_SelectAction action) {
+  // Enters editing mode, optionally pre-selecting the long-pressed recording.
+  void _enterEditing({String? select}) {
     setState(() {
-      _selectAction = action;
+      _editing = true;
+      _selectedIds.clear();
+      if (select != null) _selectedIds.add(select);
+    });
+  }
+
+  void _exitEditing() {
+    setState(() {
+      _editing = false;
       _selectedIds.clear();
     });
   }
 
-  void _exitSelectionMode() {
-    setState(() {
-      _selectAction = null;
-      _selectedIds.clear();
-    });
-  }
-
-  // Title shown in the app bar while selecting.
-  String _selectionTitle() {
-    switch (_selectAction!) {
-      case _SelectAction.rename:
-        return _selectedIds.isEmpty
-            ? 'Select a recording'
-            : 'Rename recording';
-      case _SelectAction.move:
-        return _selectedIds.isEmpty
-            ? 'Select recordings'
-            : '${_selectedIds.length} selected';
-      case _SelectAction.average:
-        return _selectedIds.isEmpty
-            ? 'Select recordings'
-            : '${_selectedIds.length} selected';
-      case _SelectAction.delete:
-        return _selectedIds.isEmpty
-            ? 'Select recordings'
-            : '${_selectedIds.length} selected';
-    }
-  }
+  // Title shown in the app bar while editing.
+  String _editingTitle() =>
+      _selectedIds.isEmpty ? 'Select recordings' : '${_selectedIds.length} selected';
 
   // Selects (or clears) every recording in this category. Used by the multi
   // select purposes (move / average / delete).
@@ -745,49 +1075,48 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     );
   }
 
-  // The confirm button shown in the app bar for the current selection purpose.
-  // (Averaging is confirmed via the floating button instead.)
-  Widget _selectionConfirmAction(String userId, RecordingRepository repo) {
-    switch (_selectAction!) {
-      case _SelectAction.rename:
-        return IconButton(
-          icon: const Icon(Icons.edit_outlined),
-          tooltip: 'Rename',
-          onPressed: _selectedIds.length == 1
-              ? () async {
-                  final recordings = await repo.watchRecordings(userId).first;
-                  if (!mounted) return;
-                  await _renameSelected(recordings);
-                }
-              : null,
-        );
-      case _SelectAction.move:
-        return IconButton(
-          icon: const Icon(Icons.drive_file_move_outline),
-          tooltip: 'Move to category',
-          onPressed:
-              _selectedIds.isEmpty ? null : () => _moveSelected(userId, repo),
-        );
-      case _SelectAction.delete:
-        return IconButton(
-          icon: const Icon(Icons.delete_outline),
-          tooltip: 'Delete selected',
-          onPressed: _selectedIds.isEmpty
-              ? null
-              : () async {
-                  final recordings = await repo.watchRecordings(userId).first;
-                  if (!mounted) return;
-                  await _confirmDeleteSelected(
-                    context,
-                    userId,
-                    repo,
-                    recordings,
-                  );
-                },
-        );
-      case _SelectAction.average:
-        return const SizedBox.shrink();
-    }
+  // Contextual action-bar buttons shown at the top while editing. Every
+  // action works on the current multi-selection (disabled when nothing is
+  // picked), matching Android's "select then act" pattern.
+  List<Widget> _editingActions(String userId, RecordingRepository repo) {
+    final hasSelection = _selectedIds.isNotEmpty;
+    return [
+      _selectAllAction(userId, repo),
+      IconButton(
+        icon: const Icon(Icons.drive_file_move_outline),
+        tooltip: 'Move to another category',
+        onPressed: hasSelection ? () => _moveSelected(userId, repo) : null,
+      ),
+      IconButton(
+        icon: const Icon(Icons.bar_chart_rounded),
+        tooltip: 'Average selected',
+        onPressed: hasSelection
+            ? () async {
+                final all = await repo.watchRecordings(userId).first;
+                if (!mounted) return;
+                final recordings =
+                    all.where((r) => _categoryOf(r) == _category).toList();
+                _showCombinedStats(recordings);
+              }
+            : null,
+      ),
+      IconButton(
+        icon: const Icon(Icons.delete_outline),
+        tooltip: 'Delete selected',
+        onPressed: hasSelection
+            ? () async {
+                final recordings = await repo.watchRecordings(userId).first;
+                if (!mounted) return;
+                await _confirmDeleteSelected(
+                  context,
+                  userId,
+                  repo,
+                  recordings,
+                );
+              }
+            : null,
+      ),
+    ];
   }
 
   // Simple single-field text dialog used for renaming.
@@ -822,25 +1151,6 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     );
   }
 
-  // Renames this whole folder by re-categorizing every recording in it.
-  Future<void> _renameCategory(String userId, RecordingRepository repo) async {
-    final newName = await _promptText(
-      title: 'Rename category',
-      label: 'Category name',
-      initial: _category,
-    );
-    if (newName == null || newName.isEmpty || newName == _category) return;
-
-    final all = await repo.watchRecordings(userId).first;
-    final ids = all
-        .where((r) => _categoryOf(r) == _category)
-        .map((r) => r.id)
-        .toList();
-    await repo.setCategoryForRecordings(userId, ids, newName);
-    if (!mounted) return;
-    setState(() => _category = newName);
-  }
-
   Future<void> _renameRecording(Recording r) async {
     final userId = context.read<AuthProvider>().user?.uid;
     if (userId == null) return;
@@ -851,16 +1161,6 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     );
     if (newName == null || newName.isEmpty || newName == r.name) return;
     await RecordingRepository().renameRecording(userId, r.id, newName);
-  }
-
-  // Renames the single recording picked while in rename-selection mode.
-  Future<void> _renameSelected(List<Recording> recordings) async {
-    if (_selectedIds.length != 1) return;
-    final id = _selectedIds.first;
-    final match = recordings.where((r) => r.id == id);
-    if (match.isEmpty) return;
-    await _renameRecording(match.first);
-    if (mounted) _exitSelectionMode();
   }
 
   // Moves every selected recording to another (existing or new) category.
@@ -887,7 +1187,7 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     await repo.setCategoryForRecordings(userId, ids, target);
     if (!mounted) return;
     final n = ids.length;
-    _exitSelectionMode();
+    _exitEditing();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Moved $n recording${n == 1 ? '' : 's'} to "$target"'),
@@ -980,6 +1280,19 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
     final toDelete =
         recordings.where((r) => _selectedIds.contains(r.id)).toList();
 
+    await _deleteRecordings(userId, repo, toDelete);
+
+    if (mounted) _exitEditing();
+  }
+
+  // Permanently deletes the given recordings: local file, Firebase Storage
+  // copy, and the Firestore document. Shared by selection-delete and
+  // category-delete.
+  Future<void> _deleteRecordings(
+    String userId,
+    RecordingRepository repo,
+    List<Recording> toDelete,
+  ) async {
     for (final r in toDelete) {
       try {
         final file = File(r.localPath);
@@ -998,19 +1311,12 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
         }
         await repo.deleteRecording(userId, r.id);
       } catch (e) {
-        if (context.mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Delete failed: $e')),
           );
         }
       }
-    }
-
-    if (mounted) {
-      setState(() {
-        _selectAction = null;
-        _selectedIds.clear();
-      });
     }
   }
 
@@ -1029,67 +1335,62 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
       backgroundColor: AppColors.pageBg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: Text(
-          _selectionMode ? _selectionTitle() : _category,
-        ),
-        leading: _selectionMode
+        title: _editing
+            ? Text(_editingTitle())
+            : _searching
+                ? TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    onChanged: (v) => setState(() => _query = v),
+                    textInputAction: TextInputAction.search,
+                    decoration: const InputDecoration(
+                      hintText: 'Search recordings',
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                    ),
+                    style: const TextStyle(
+                      color: AppColors.wine,
+                      fontSize: 18,
+                    ),
+                  )
+                : Text(_category),
+        leading: _editing
             ? IconButton(
                 icon: const Icon(Icons.close),
-                tooltip: 'Cancel selection',
-                onPressed: _exitSelectionMode,
+                tooltip: 'Done',
+                onPressed: _exitEditing,
               )
-            : null,
-        actions: [
-          if (_selectionMode) ...[
-            if (_selectAction != _SelectAction.rename)
-              _selectAllAction(userId, repo),
-            _selectionConfirmAction(userId, repo),
-          ] else
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                switch (v) {
-                  case 'rename':
-                    _startSelection(_SelectAction.rename);
-                    break;
-                  case 'move':
-                    _startSelection(_SelectAction.move);
-                    break;
-                  case 'average':
-                    _startSelection(_SelectAction.average);
-                    break;
-                  case 'delete':
-                    _startSelection(_SelectAction.delete);
-                    break;
-                  case 'rename_category':
-                    _renameCategory(userId, repo);
-                    break;
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'rename',
-                  child: Text('Rename a recording'),
-                ),
-                PopupMenuItem(
-                  value: 'move',
-                  child: Text('Move recordings to category'),
-                ),
-                PopupMenuItem(
-                  value: 'average',
-                  child: Text('Average recordings'),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Text('Delete recordings'),
-                ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'rename_category',
-                  child: Text('Rename category'),
-                ),
-              ],
-            ),
-        ],
+            : _searching
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Close search',
+                    onPressed: _exitSearch,
+                  )
+                : null,
+        actions: _editing
+            ? _editingActions(userId, repo)
+            : _searching
+                ? [
+                    if (_query.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Clear',
+                        onPressed: () => setState(() {
+                          _query = '';
+                          _searchController.clear();
+                        }),
+                      ),
+                  ]
+                : [
+                    // Renaming / deleting the category itself now lives on the
+                    // Recordings screen (long-press a folder). Here we only
+                    // search, and editing recordings starts with a long-press.
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: 'Search recordings',
+                      onPressed: _enterSearch,
+                    ),
+                  ],
       ),
       body: Stack(
         children: [
@@ -1111,10 +1412,10 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                   ),
                 );
               }
-              final recordings = (snapshot.data ?? [])
+              final all = (snapshot.data ?? [])
                   .where((r) => _categoryOf(r) == _category)
                   .toList();
-              if (recordings.isEmpty) {
+              if (all.isEmpty) {
                 return const _EmptyState(
                   icon: Icons.folder_off_outlined,
                   title: 'Nothing here anymore',
@@ -1122,44 +1423,43 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                 );
               }
 
-              // First item is the per-category stats summary, followed by
-              // the recordings that belong to this folder.
-              return Stack(
-                children: [
-                  ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
-                    itemCount: recordings.length + 1,
-                    separatorBuilder: (_, i) =>
-                        SizedBox(height: i == 0 ? 18 : 10),
-                    itemBuilder: (context, i) {
-                      if (i == 0) {
-                        return SessionStatsCard(
-                          recordings: recordings,
-                          title: 'Category Averages',
-                        );
-                      }
-                      return _buildRecordingCard(context, recordings[i - 1]);
-                    },
-                  ),
-                  // Average the selected recordings while in average mode.
-                  if (_selectAction == _SelectAction.average &&
-                      _selectedIds.isNotEmpty)
-                    Positioned(
-                      left: 16,
-                      right: 16,
-                      bottom: 24,
-                      child: FilledButton.icon(
-                        onPressed: () => _showCombinedStats(recordings),
-                        icon: const Icon(Icons.bar_chart_rounded),
-                        label: Text(
-                          'Average selected (${_selectedIds.length})',
-                        ),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                      ),
-                    ),
-                ],
+              // While searching, filter by name and drop the stats header so
+              // only the matching recordings show.
+              final q = _query.trim().toLowerCase();
+              final searchActive = _searching && q.isNotEmpty;
+              final recordings = searchActive
+                  ? all
+                      .where(
+                          (r) => _displayName(r).toLowerCase().contains(q))
+                      .toList()
+                  : all;
+
+              if (searchActive && recordings.isEmpty) {
+                return _EmptyState(
+                  icon: Icons.search_off_rounded,
+                  title: 'No matches',
+                  message: 'No recordings named like "$q" in this category.',
+                );
+              }
+
+              // Show the per-category stats summary first, but not while
+              // searching or editing recordings (keeps edit mode focused).
+              final showStats = !searchActive && !_editing;
+              return ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
+                itemCount: recordings.length + (showStats ? 1 : 0),
+                separatorBuilder: (_, i) =>
+                    SizedBox(height: showStats && i == 0 ? 18 : 10),
+                itemBuilder: (context, i) {
+                  if (showStats && i == 0) {
+                    return SessionStatsCard(
+                      recordings: recordings,
+                      title: 'Category Averages',
+                    );
+                  }
+                  final index = showStats ? i - 1 : i;
+                  return _buildRecordingCard(context, recordings[index]);
+                },
               );
             },
           ),
@@ -1176,7 +1476,7 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
       radius: 20,
       padding: const EdgeInsets.all(12),
       onTap: () {
-        if (_selectionMode) {
+        if (_editing) {
           _toggleSelected(r.id);
         } else {
           Navigator.of(context).push(
@@ -1184,10 +1484,12 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
           );
         }
       },
+      // Long-press starts Android-style editing and selects this recording.
+      onLongPress: _editing ? null : () => _enterEditing(select: r.id),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_selectionMode)
+          if (_editing)
             Padding(
               padding: const EdgeInsets.only(top: 4, right: 4),
               child: Checkbox(
@@ -1266,6 +1568,14 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
               ],
             ),
           ),
+          // In editing mode, a pencil next to each recording renames just it.
+          if (_editing)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              tooltip: 'Rename recording',
+              color: AppColors.wine,
+              onPressed: () => _renameRecording(r),
+            ),
         ],
       ),
     );

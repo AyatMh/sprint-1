@@ -303,7 +303,10 @@ Widget _comparisonMetricRow(
 }) {
   Color aColor = Colors.black87;
   Color bColor = Colors.black87;
-  if (aVal != bVal) {
+  // Only colour a winner/loser when the two sides actually differ. Compare the
+  // displayed text too, so values that round to the same number (e.g. 87.36 vs
+  // 87.44 both shown as "87%") stay neutral instead of one red and one green.
+  if (aVal != bVal && aText != bText) {
     final aBetter = lowerIsBetter ? aVal < bVal : aVal > bVal;
     aColor = aBetter ? Colors.green.shade700 : Colors.red.shade400;
     bColor = aBetter ? Colors.red.shade400 : Colors.green.shade700;

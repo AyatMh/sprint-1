@@ -118,6 +118,18 @@ class RecordingRepository {
     });
   }
 
+  // Stores the AI coaching tips generated from a recording's analysis.
+  Future<void> updateAiTips({
+    required String userId,
+    required String recordingId,
+    required Map<String, dynamic> tips,
+  }) async {
+    await _userRecordings(userId).doc(recordingId).update({
+      'aiTips': tips,
+      'aiTipsAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   // Marks a recording as being analyzed in the cloud. Called after the video
   // is uploaded to Storage; the Cloud Function will later set status 'ready'.
   Future<void> markProcessing({

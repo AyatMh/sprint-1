@@ -67,6 +67,14 @@ class TranscriptionService {
       'model': 'whisper-1',
       'response_format': 'verbose_json',
       'language': language,
+      // By default Whisper "cleans" disfluencies (um, uh, like, you know) out
+      // of the transcript, so the filler-word analyzer never sees them. A
+      // prompt full of fillers nudges Whisper to keep them verbatim, and
+      // temperature 0 keeps the output deterministic.
+      'prompt':
+          'Um, uh, er, ah, hmm. Well, so, like, you know, I mean, actually, '
+              'basically, literally, sort of, kind of.',
+      'temperature': '0',
     });
 
     try {

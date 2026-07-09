@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -50,6 +51,15 @@ class RecordingService {
     );
 
     await _controller!.initialize();
+
+    // Lock the sensor to portrait so the preview (and recorded video) stay
+    // upright instead of appearing rotated sideways/landscape. Wrapped in a
+    // try/catch since not every platform supports orientation locking.
+    try {
+      await _controller!.lockCaptureOrientation(DeviceOrientation.portraitUp);
+    } catch (_) {
+      // Best-effort — ignore on platforms that don't support it.
+    }
   }
 
   // Starts video recording. If [onImage] is given, camera frames are streamed

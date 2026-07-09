@@ -62,6 +62,11 @@ class Recording {
   final String? status;      // 'processing' | 'ready' | 'failed'
   final String? storagePath; // path of the uploaded video in Firebase Storage
 
+  // AI coaching tips generated from this recording's analysis. Held as the raw
+  // parsed JSON: {summary, strengths[], improvements[], tips[]}.
+  final Map<String, dynamic>? aiTips;
+  final DateTime? aiTipsAt;
+
   Recording({
     required this.id,
     required this.userId,
@@ -93,9 +98,13 @@ class Recording {
     this.postureShiftCount,
     this.status,
     this.storagePath,
+    this.aiTips,
+    this.aiTipsAt,
   });
 
   bool get hasTranscript => transcript != null && transcript!.isNotEmpty;
+
+  bool get hasAiTips => aiTips != null && aiTips!.isNotEmpty;
 
   // Returns a copy with the given analysis fields replaced and everything
   // else (name, category, body-language metrics, ...) preserved.
@@ -118,6 +127,8 @@ class Recording {
     List<Map<String, dynamic>>? silenceEvents,
     String? status,
     String? storagePath,
+    Map<String, dynamic>? aiTips,
+    DateTime? aiTipsAt,
   }) {
     return Recording(
       id: id,
@@ -152,6 +163,8 @@ class Recording {
       postureShiftCount: postureShiftCount,
       status: status ?? this.status,
       storagePath: storagePath ?? this.storagePath,
+      aiTips: aiTips ?? this.aiTips,
+      aiTipsAt: aiTipsAt ?? this.aiTipsAt,
     );
   }
 
@@ -194,6 +207,8 @@ class Recording {
         if (postureShiftCount != null) 'postureShiftCount': postureShiftCount,
         if (status != null) 'status': status,
         if (storagePath != null) 'storagePath': storagePath,
+        if (aiTips != null) 'aiTips': aiTips,
+        if (aiTipsAt != null) 'aiTipsAt': Timestamp.fromDate(aiTipsAt!),
       };
 
   factory Recording.fromFirestore(DocumentSnapshot doc) {
@@ -244,6 +259,10 @@ class Recording {
       postureShiftCount: data['postureShiftCount'] as int?,
       status: data['status'] as String?,
       storagePath: data['storagePath'] as String?,
+      aiTips: data['aiTips'] != null
+          ? Map<String, dynamic>.from(data['aiTips'])
+          : null,
+      aiTipsAt: (data['aiTipsAt'] as Timestamp?)?.toDate(),
     );
   }
 }

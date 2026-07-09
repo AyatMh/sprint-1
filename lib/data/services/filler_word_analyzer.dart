@@ -32,7 +32,7 @@ class FillerWordAnalyzer {
       return FillerWordResult(total: 0, breakdown: {});
     }
 
-    final fillers = language == 'en' ? englishFillers : englishFillers;
+    final fillers = englishFillers;
     final lower = transcript.toLowerCase();
     final breakdown = <String, int>{};
     int total = 0;

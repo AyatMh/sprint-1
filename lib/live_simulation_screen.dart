@@ -79,9 +79,11 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
   static const double _kEmaAlpha = 0.2;
   static const int _kMaxDtMs = 500; // clamp gaps so stalls don't skew averages
 
-  // ===== Calibration (~3s neutral baseline before scoring starts) =====
+  // ===== Calibration (neutral baseline before scoring starts) =====
+  // Seconds the user gets to settle and look at the camera before scoring.
+  static const int _kCalibSeconds = 6;
   bool _calibrating = false;
-  int _calibCountdown = 3;
+  int _calibCountdown = _kCalibSeconds;
   Timer? _calibTimer;
   int _calibFaceSamples = 0;
   double _calibYawSum = 0, _calibPitchSum = 0;
@@ -143,6 +145,11 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
         await recordingProv.startRecording(onImage: _processCameraImage);
         _sessionActive = true;
 
+        // Tell the user what's about to happen before the countdown runs, so
+        // they know to sit straight and look at the camera for calibration.
+        await _showGetReadyDialog();
+        if (!mounted) return;
+
         // Spend the first few seconds learning the user's neutral pose so
         // posture and eye-contact are measured relative to *them*, not fixed
         // thresholds. The countdown timer starts once calibration finishes.
@@ -153,10 +160,50 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
 
   // ===== Calibration =====
 
+  // Heads-up shown before the calibration countdown. Explains that the next
+  // few seconds tune the analysis to the user, so they know to hold still.
+  Future<void> _showGetReadyDialog() {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.wine,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        icon: const Icon(Icons.center_focus_strong_rounded,
+            color: Colors.white, size: 48),
+        title: const Text(
+          'Get ready',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Before we begin, we\'ll take a few seconds to calibrate.\n\n'
+          'Sit straight, face the camera, and hold still while the countdown '
+          'runs so we can tune the analysis to you.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.wine,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("I'm ready"),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _startCalibration() {
     setState(() {
       _calibrating = true;
-      _calibCountdown = 3;
+      _calibCountdown = _kCalibSeconds;
     });
     _calibTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
@@ -752,11 +799,19 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
   Widget _fullScreenCamera(CameraController controller, Size size) {
     var scale = size.aspectRatio * controller.value.aspectRatio;
     if (scale < 1) scale = 1 / scale;
+
+    Widget preview = CameraPreview(controller);
+    // Mirror the front camera horizontally so it reads like a mirror (the
+    // natural "selfie" view) instead of appearing flipped/reversed.
+    if (controller.description.lensDirection == CameraLensDirection.front) {
+      preview = Transform.flip(flipX: true, child: preview);
+    }
+
     return ClipRect(
       child: Transform.scale(
         scale: scale,
         alignment: Alignment.center,
-        child: Center(child: CameraPreview(controller)),
+        child: Center(child: preview),
       ),
     );
   }
