@@ -7,6 +7,7 @@ import 'package:interviewpro/core/theme/app_theme.dart';
 
 void main() {
   test('App theme builds', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
     final theme = AppTheme.light;
     expect(theme.useMaterial3, isTrue);
   });

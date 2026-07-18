@@ -9,6 +9,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:provider/provider.dart';
 
+import 'data/models/interview_question.dart';
 import 'features/recording/providers/recording_provider.dart';
 import 'features/auth/providers/auth_provider.dart';
 import 'features/recording/screens/session_complete_screen.dart';
@@ -17,7 +18,15 @@ import 'core/theme/app_theme.dart';
 class LiveSimulationScreen extends StatefulWidget {
   final String initialCategory;
 
-  const LiveSimulationScreen({super.key, required this.initialCategory});
+  // Questions from the user's question bank for this category, if any. When
+  // non-empty, the AI coach shows them one at a time during the recording.
+  final List<InterviewQuestion> questions;
+
+  const LiveSimulationScreen({
+    super.key,
+    required this.initialCategory,
+    this.questions = const [],
+  });
 
   @override
   State<LiveSimulationScreen> createState() => _LiveSimulationScreenState();
@@ -45,6 +54,16 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
   // ===== Session details (captured before recording starts) =====
   String _recordingName = '';
   late String _recordingCategory;
+
+  // ===== AI coach: asks the user's saved questions one at a time =====
+  int _questionIndex = 0;
+  bool get _hasQuestions => widget.questions.isNotEmpty;
+
+  void _nextQuestion() {
+    if (_questionIndex < widget.questions.length - 1) {
+      setState(() => _questionIndex++);
+    }
+  }
 
   // ===== Live face metrics (smoothed values are what the UI shows) =====
   double _confidencePercentage = 0.0;
@@ -886,6 +905,68 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
     );
   }
 
+  // Floating card showing the current AI-coach question, with a button to
+  // advance to the next one. Hidden entirely once the last question is
+  // reached (the user keeps answering it until they end the session).
+  Widget _questionCard() {
+    final questions = widget.questions;
+    final isLast = _questionIndex >= questions.length - 1;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+      decoration: BoxDecoration(
+        color: AppColors.wine.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(color: Colors.black38, blurRadius: 12, offset: Offset(0, 4)),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(Icons.auto_awesome_rounded,
+                color: AppColors.ice, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Question ${_questionIndex + 1} of ${questions.length}',
+                  style: const TextStyle(
+                    color: AppColors.ice,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  questions[_questionIndex].text,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!isLast)
+            IconButton(
+              onPressed: _nextQuestion,
+              tooltip: 'Next question',
+              icon: const Icon(Icons.arrow_forward_rounded,
+                  color: Colors.white),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _circleIconButton(IconData icon, VoidCallback onTap) {
     return Material(
       color: AppColors.cardBg.withValues(alpha: 0.9),
@@ -968,6 +1049,20 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
               ),
             ),
           ),
+
+          // ===== AI coach: current question, shown once recording begins =====
+          if (_hasQuestions && _sessionActive && !_calibrating)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 70, 16, 0),
+                  child: _questionCard(),
+                ),
+              ),
+            ),
 
           // ===== Bottom: circular live metrics + finish button =====
           Align(

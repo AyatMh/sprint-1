@@ -9,6 +9,7 @@ import '../../../data/repositories/recording_repository.dart';
 import '../../../shared/widgets/glass.dart';
 import '../../../shared/widgets/session_stats.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../questions/screens/question_bank_screen.dart';
 import '../../recording/screens/replay_screen.dart';
 import '../../recording/start_practice_session.dart';
 import '../../analysis/screens/analysis_screen.dart';
@@ -1381,7 +1382,20 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                 onPressed: _exitEditing,
               )
             : null,
-        actions: _editing ? _editingActions(userId, repo) : null,
+        actions: _editing
+            ? _editingActions(userId, repo)
+            : [
+                IconButton(
+                  icon: const Icon(Icons.quiz_rounded),
+                  tooltip: 'AI coach questions',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          QuestionBankScreen(filterCategory: _category),
+                    ),
+                  ),
+                ),
+              ],
       ),
       body: Stack(
         children: [

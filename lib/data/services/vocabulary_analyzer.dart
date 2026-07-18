@@ -107,7 +107,14 @@ class VocabularyAnalyzer {
 
     final total = allWords.length;
     final unique = counts.length;
-    final diversity = total > 0 ? unique / total : 0.0;
+    // Diversity must compare unique meaningful words against the *same*
+    // population (meaningful word occurrences), not every word spoken —
+    // dividing by allWords.length here previously mixed the two universes,
+    // which silently deflated the score by the stop-word share of any
+    // normal sentence (articles, pronouns, etc. never counted toward
+    // "unique" but always inflated the denominator).
+    final diversity =
+        meaningfulWords.isNotEmpty ? unique / meaningfulWords.length : 0.0;
 
     return VocabularyResult(
       totalWords: total,

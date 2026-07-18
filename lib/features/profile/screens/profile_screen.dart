@@ -7,6 +7,7 @@ import '../../../data/repositories/recording_repository.dart';
 import '../../../shared/widgets/glass.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../goals/goals_screen.dart';
+import '../../questions/screens/question_bank_screen.dart';
 import 'settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -368,6 +369,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: 'Practice goals',
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const GoalsScreen()),
+                    ),
+                  ),
+                  const Divider(
+                    height: 1,
+                    thickness: 0.5,
+                    indent: 60,
+                    color: AppColors.separator,
+                  ),
+                  _setRow(
+                    colors: const [Color(0xFF5E6AD2), Color(0xFF8C99F0)],
+                    icon: Icons.quiz_rounded,
+                    title: 'Interview questions',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const QuestionBankScreen()),
                     ),
                   ),
                   const Divider(

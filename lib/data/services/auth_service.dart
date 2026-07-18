@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class AuthService {
@@ -16,7 +17,26 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
-    return credential.user;
+    final user = credential.user;
+    if (user != null) await ensureUserDocument(user);
+    return user;
+  }
+
+  // Creates the top-level `users/{uid}` document if it doesn't exist yet.
+  // Firestore security rules gate access to a user's subcollections
+  // (recordings, questions, ...) on this document existing, so every
+  // signed-in user needs one — including accounts created before this check
+  // existed, which is why this also runs on every sign-in (self-healing).
+  Future<void> ensureUserDocument(User user) async {
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+        {'email': user.email},
+        SetOptions(merge: true),
+      );
+    } catch (_) {
+      // Best-effort: if this fails the reads below will surface the real
+      // permission error instead of masking it here.
+    }
   }
 
   Future<User?> signIn({

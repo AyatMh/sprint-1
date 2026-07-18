@@ -20,6 +20,9 @@ class AuthProvider extends ChangeNotifier {
     _authService.authStateChanges.listen((user) {
       _user = user;
       notifyListeners();
+      // Self-heal accounts that predate the user-document fix (Firestore
+      // rules require users/{uid} to exist before subcollection reads work).
+      if (user != null) _authService.ensureUserDocument(user);
     });
   }
 
