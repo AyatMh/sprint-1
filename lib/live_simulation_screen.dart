@@ -814,32 +814,39 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
     super.dispose();
   }
 
-  // Full-bleed camera preview that covers the whole screen (crops to fill).
-  Widget _fullScreenCamera(CameraController controller, Size size) {
-    var scale = size.aspectRatio * controller.value.aspectRatio;
-    if (scale < 1) scale = 1 / scale;
+  // Camera preview shown at its natural field of view — no crop/zoom, so it
+  // may letterbox (black bars) if the camera's aspect ratio doesn't exactly
+  // match the screen, rather than stretching/cropping to fill it.
+  Widget _fullScreenCamera(CameraController controller) {
+    final camera = controller.description;
 
-    // Build the preview ourselves and force a portrait-up orientation. The
-    // default CameraPreview follows `recordingOrientation`, which on some
-    // devices is reported as landscape once recording starts — rotating the
-    // whole preview 90°. Using the raw texture in a portrait aspect box keeps
-    // it upright regardless.
-    Widget preview = AspectRatio(
-      aspectRatio: 1 / controller.value.aspectRatio,
+    // The stock CameraPreview rotates using `recordingOrientation`, which on
+    // some devices is reported wrong once recording actually starts (the
+    // saved video's own rotation metadata is set correctly regardless — only
+    // the *live* preview widget was affected). The app is locked to portrait
+    // (see main.dart), so the device's own rotation contribution is always
+    // zero here — only the camera's fixed sensor orientation needs
+    // compensating, using the same degrees-based formula already proven for
+    // ML Kit's rotation in _currentRotation() above.
+    final quarterTurns = (camera.sensorOrientation ~/ 90) % 4;
+    final rawAspect = controller.value.aspectRatio;
+    final displayAspect = quarterTurns.isOdd ? (1 / rawAspect) : rawAspect;
+
+    Widget preview = RotatedBox(
+      quarterTurns: quarterTurns,
       child: controller.buildPreview(),
     );
 
     // Mirror the front camera horizontally so it reads like a mirror (the
     // natural "selfie" view) instead of appearing flipped/reversed.
-    if (controller.description.lensDirection == CameraLensDirection.front) {
+    if (camera.lensDirection == CameraLensDirection.front) {
       preview = Transform.flip(flipX: true, child: preview);
     }
 
-    return ClipRect(
-      child: Transform.scale(
-        scale: scale,
-        alignment: Alignment.center,
-        child: Center(child: preview),
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: AspectRatio(aspectRatio: displayAspect, child: preview),
       ),
     );
   }
@@ -986,7 +993,6 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
   Widget build(BuildContext context) {
     final recordingProv = context.watch<RecordingProvider>();
     final controller = recordingProv.service.controller;
-    final size = MediaQuery.of(context).size;
 
     final Color eyeColor =
         _eyeContactStatus == "Active" ? AppColors.deepMauve : AppColors.gold;
@@ -1007,7 +1013,7 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
           // ===== Full-screen camera =====
           Positioned.fill(
             child: (controller != null && controller.value.isInitialized)
-                ? _fullScreenCamera(controller, size)
+                ? _fullScreenCamera(controller)
                 : Container(
                     color: AppColors.wine,
                     child: const Center(
