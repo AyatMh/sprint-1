@@ -74,6 +74,7 @@ class RecordingProvider extends ChangeNotifier {
     String userId, {
     required String name,
     required String category,
+    bool usedAiCoach = false,
   }) async {
     if (_state != RecordingState.recording) return null;
     _ticker?.cancel();
@@ -89,6 +90,7 @@ class RecordingProvider extends ChangeNotifier {
         fileSizeBytes: stat.size,
         name: name,
         category: category,
+        usedAiCoach: usedAiCoach,
       );
       _recordStartTime = null;
       _setState(RecordingState.ready);

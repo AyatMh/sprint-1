@@ -14,6 +14,7 @@ class RecordingRepository {
     required int fileSizeBytes,
     required String name,
     required String category,
+    bool usedAiCoach = false,
   }) async {
     final docRef = await _userRecordings(userId).add({
       'userId': userId,
@@ -22,6 +23,7 @@ class RecordingRepository {
       'fileSizeBytes': fileSizeBytes,
       'name': name,
       'category': category,
+      'usedAiCoach': usedAiCoach,
       'createdAt': FieldValue.serverTimestamp(),
     });
     return docRef.id;

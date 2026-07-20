@@ -67,6 +67,10 @@ class Recording {
   final Map<String, dynamic>? aiTips;
   final DateTime? aiTipsAt;
 
+  // Whether the AI coach asked questions during this recording (as opposed
+  // to a regular, prompt-free take). Set once at recording time.
+  final bool usedAiCoach;
+
   Recording({
     required this.id,
     required this.userId,
@@ -100,6 +104,7 @@ class Recording {
     this.storagePath,
     this.aiTips,
     this.aiTipsAt,
+    this.usedAiCoach = false,
   });
 
   bool get hasTranscript => transcript != null && transcript!.isNotEmpty;
@@ -176,6 +181,7 @@ class Recording {
         'createdAt': Timestamp.fromDate(createdAt),
         'name': name,
         'category': category,
+        'usedAiCoach': usedAiCoach,
         if (transcript != null) 'transcript': transcript,
         if (transcriptSegments != null)
           'transcriptSegments':
@@ -223,6 +229,7 @@ class Recording {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       name: data['name'] ?? '',
       category: data['category'] ?? '',
+      usedAiCoach: data['usedAiCoach'] as bool? ?? false,
       transcript: data['transcript'],
       transcriptSegments: segmentsRaw
           ?.map((m) => TranscriptSegment.fromMap(Map<String, dynamic>.from(m)))

@@ -725,6 +725,7 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
         userId,
         name: _recordingName,
         category: _recordingCategory,
+        usedAiCoach: widget.questions.isNotEmpty,
       );
       localFilePath = saved?.file.path;
       recordingId = saved?.recordingId;

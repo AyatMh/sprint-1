@@ -985,7 +985,8 @@ class CategoryRecordingsScreen extends StatefulWidget {
       _CategoryRecordingsScreenState();
 }
 
-class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
+class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen>
+    with SingleTickerProviderStateMixin {
   // Android-style contextual editing mode: long-press a recording to enter,
   // then multi-select to move / delete / average, or tap a card's pencil to
   // rename that single recording.
@@ -996,12 +997,17 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
   String _query = '';
   final TextEditingController _searchController = TextEditingController();
 
+  // "All" / "Regular" / "AI Coach" tabs shown when not editing.
+  late final TabController _tabController =
+      TabController(length: 3, vsync: this);
+
   // The folder's category. Renaming now happens from the Recordings screen.
   late final String _category = widget.category;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -1396,6 +1402,19 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                   ),
                 ),
               ],
+        bottom: _editing
+            ? null
+            : TabBar(
+                controller: _tabController,
+                labelColor: AppColors.wine,
+                unselectedLabelColor: AppColors.midMauve,
+                indicatorColor: AppColors.wine,
+                tabs: const [
+                  Tab(icon: Icon(Icons.dashboard_rounded), text: 'All'),
+                  Tab(icon: Icon(Icons.videocam_rounded), text: 'Regular'),
+                  Tab(icon: Icon(Icons.auto_awesome_rounded), text: 'AI Coach'),
+                ],
+              ),
       ),
       body: Stack(
         children: [
@@ -1428,57 +1447,118 @@ class _CategoryRecordingsScreenState extends State<CategoryRecordingsScreen> {
                 );
               }
 
-              // Filter by the search box (only when not editing).
-              final q = _query.trim().toLowerCase();
-              final searchActive = !_editing && q.isNotEmpty;
-              final recordings = searchActive
-                  ? all
-                      .where(
-                          (r) => _displayName(r).toLowerCase().contains(q))
-                      .toList()
-                  : all;
-
-              // Header rows: while editing show a labelled "Select all" toggle;
-              // otherwise show the search box and (unless searching) the stats.
-              final headers = <Widget>[];
               if (_editing) {
-                headers.add(_selectAllRow(all));
-              } else {
-                headers.add(_searchBox());
-                if (!searchActive) {
-                  headers.add(SessionStatsCard(
-                    recordings: all,
-                    title: 'Category Averages',
-                  ));
-                }
+                return _buildEditingList(context, userId, repo, all);
               }
 
-              // Keep the search box on screen even when nothing matches.
-              final noMatches = searchActive && recordings.isEmpty;
+              final regular = all.where((r) => !r.usedAiCoach).toList();
+              final aiCoach = all.where((r) => r.usedAiCoach).toList();
 
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
-                itemCount:
-                    headers.length + (noMatches ? 1 : recordings.length),
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (context, i) {
-                  if (i < headers.length) return headers[i];
-                  if (noMatches) {
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 40),
-                      child: _EmptyState(
-                        icon: Icons.search_off_rounded,
-                        title: 'No matches',
-                        message:
-                            'No recordings named like "$q" in this category.',
-                      ),
-                    );
-                  }
-                  return _buildRecordingCard(
-                      context, recordings[i - headers.length]);
-                },
+              return TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildGroupTab(
+                      context, all, 'recordings', 'Category Averages'),
+                  _buildGroupTab(context, regular, 'Regular recordings',
+                      'Regular recordings averages'),
+                  _buildGroupTab(context, aiCoach, 'AI Coach recordings',
+                      'AI Coach recordings averages'),
+                ],
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // One tab's content: search box, that group's stats, and its recordings.
+  Widget _buildGroupTab(
+    BuildContext context,
+    List<Recording> groupAll,
+    String sectionLabel,
+    String statsTitle,
+  ) {
+    if (groupAll.isEmpty) {
+      return _EmptyState(
+        icon: Icons.folder_off_outlined,
+        title: 'Nothing here yet',
+        message: 'No $sectionLabel in this category yet.',
+      );
+    }
+
+    final q = _query.trim().toLowerCase();
+    final searchActive = q.isNotEmpty;
+    final recordings = searchActive
+        ? groupAll.where((r) => _displayName(r).toLowerCase().contains(q)).toList()
+        : groupAll;
+
+    final items = <Widget>[_searchBox()];
+    if (!searchActive) {
+      items.add(SessionStatsCard(recordings: groupAll, title: statsTitle));
+    }
+    if (searchActive && recordings.isEmpty) {
+      items.add(Padding(
+        padding: const EdgeInsets.only(top: 40),
+        child: _EmptyState(
+          icon: Icons.search_off_rounded,
+          title: 'No matches',
+          message: 'No recordings named like "$q" in this section.',
+        ),
+      ));
+    } else {
+      items.addAll(recordings.map((r) => _buildRecordingCard(context, r)));
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, i) => items[i],
+    );
+  }
+
+  // Editing mode: a single flat list (both groups, headed by section labels)
+  // so "select all" / batch move / batch delete act across everything at once.
+  Widget _buildEditingList(BuildContext context, String userId,
+      RecordingRepository repo, List<Recording> all) {
+    final regular = all.where((r) => !r.usedAiCoach).toList();
+    final aiCoach = all.where((r) => r.usedAiCoach).toList();
+
+    final items = <Widget>[_selectAllRow(all)];
+    if (regular.isNotEmpty) {
+      items.add(_sectionHeader(
+          Icons.videocam_rounded, 'Regular recordings (${regular.length})'));
+      items.addAll(regular.map((r) => _buildRecordingCard(context, r)));
+    }
+    if (aiCoach.isNotEmpty) {
+      items.add(_sectionHeader(
+          Icons.auto_awesome_rounded, 'AI Coach recordings (${aiCoach.length})'));
+      items.addAll(aiCoach.map((r) => _buildRecordingCard(context, r)));
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, i) => items[i],
+    );
+  }
+
+  Widget _sectionHeader(IconData icon, String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: AppColors.deepMauve),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.wine,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
