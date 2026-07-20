@@ -41,7 +41,7 @@ class SilenceResult {
 }
 
 class SilenceAnalyzer {
-  static const double silenceThresholdSeconds = 2.0;
+  static const double silenceThresholdSeconds = 7.0;
   static const double minRecordingSeconds = 3.0;
 
   static SilenceResult analyze({

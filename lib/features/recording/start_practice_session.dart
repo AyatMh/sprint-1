@@ -93,21 +93,31 @@ Future<void> startPracticeSession(BuildContext context) async {
   if (selectedCategory == null) return;
 
   // Always let the user choose between a regular recording and one where the
-  // AI coach asks questions — even when this category has none yet. Only if
-  // they pick "with questions" do we then either let them choose which ones
-  // (if some exist) or offer to add some on the spot (if none do).
+  // AI coach asks questions — even when this category has none yet. If they
+  // pick "with questions" but end up with none selected (declined to add any,
+  // added none, or backed out of picking), loop back to the mode choice
+  // instead of silently starting a regular recording behind their back —
+  // that choice should only ever be made explicitly, via "Regular recording".
   List<InterviewQuestion> questionsToUse = [];
   if (userId != null) {
-    var categoryQuestions = await _questionsForCategory(userId, selectedCategory);
+    modeChoice:
+    while (true) {
+      var categoryQuestions =
+          await _questionsForCategory(userId, selectedCategory);
 
-    if (!context.mounted) return;
-    final mode = await showRecordingModeSheet(
-      context,
-      questionCount: categoryQuestions.length,
-    );
-    if (mode == null) return; // backed out of the sheet
+      if (!context.mounted) return;
+      final mode = await showRecordingModeSheet(
+        context,
+        questionCount: categoryQuestions.length,
+      );
+      if (mode == null) return; // backed out of the sheet entirely
 
-    if (mode == RecordingMode.withQuestions) {
+      if (mode == RecordingMode.regular) {
+        questionsToUse = [];
+        break modeChoice;
+      }
+
+      // mode == RecordingMode.withQuestions
       if (categoryQuestions.isEmpty) {
         if (!context.mounted) return;
         final wentToAdd = await _offerToAddQuestions(context, selectedCategory);
@@ -118,17 +128,25 @@ Future<void> startPracticeSession(BuildContext context) async {
         }
       }
 
-      if (categoryQuestions.isNotEmpty) {
-        if (!context.mounted) return;
-        final picked = await showQuestionPickerSheet(
-          context,
-          questions: categoryQuestions,
-        );
-        if (picked == null) return; // backed out of picking questions
-        questionsToUse = picked;
+      if (categoryQuestions.isEmpty) {
+        // Still nothing to ask — re-show the mode choice instead of quietly
+        // starting a regular recording the user didn't ask for.
+        continue modeChoice;
       }
-      // Otherwise still no questions after being offered — fall back to a
-      // regular recording (questionsToUse stays empty).
+
+      if (!context.mounted) return;
+      final picked = await showQuestionPickerSheet(
+        context,
+        questions: categoryQuestions,
+      );
+      if (picked == null || picked.isEmpty) {
+        // Backed out of picking (or somehow picked nothing) — reconsider the
+        // mode instead of starting a questions-less "AI coach" session.
+        continue modeChoice;
+      }
+
+      questionsToUse = picked;
+      break modeChoice;
     }
   }
 

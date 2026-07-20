@@ -23,7 +23,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _loading = false;
   String _statusMessage = '';
   bool _tipsLoading = false;
-  bool _showAllTopWords = false;
+  bool _showRepeatedWords = false;
   late Recording _recording;
 
   @override
@@ -573,50 +573,61 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                       ),
                     ],
                   ),
-                  if ((_recording.topWords ?? []).isNotEmpty) ...[
-                    const Divider(height: 24),
-                    Text(
-                      'Most used words',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    _collapsibleWordChips(
-                      words: _recording.topWords ?? [],
-                      expanded: _showAllTopWords,
-                      onToggle: () => setState(
-                          () => _showAllTopWords = !_showAllTopWords),
-                    ),
-                  ],
-                  if ((_recording.overusedWords ?? []).isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.orange.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.warning_amber_rounded,
-                            color: Colors.orange,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'You used ${(_recording.overusedWords ?? []).length} word(s) more than 4 times. Consider varying your vocabulary.',
-                              style: const TextStyle(fontSize: 13),
+                  Builder(builder: (context) {
+                    // Only words repeated more than 5 times — reuses the
+                    // already-stored overused list (threshold 4+) and filters
+                    // further, so it's correct for recordings analyzed
+                    // before this threshold existed too.
+                    final repeated = (_recording.overusedWords ?? [])
+                        .where((w) => (w['count'] as num) > 5)
+                        .toList();
+                    if (repeated.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Divider(height: 24),
+                        Row(
+                          children: [
+                            const Icon(Icons.repeat_rounded,
+                                size: 18, color: Colors.deepPurple),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${repeated.length} word${repeated.length == 1 ? '' : 's'} '
+                                'repeated more than 5 times',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
                             ),
+                            IconButton(
+                              icon: Icon(_showRepeatedWords
+                                  ? Icons.expand_less
+                                  : Icons.more_horiz),
+                              tooltip: _showRepeatedWords
+                                  ? 'Hide words'
+                                  : 'Show words',
+                              onPressed: () => setState(() =>
+                                  _showRepeatedWords = !_showRepeatedWords),
+                            ),
+                          ],
+                        ),
+                        if (_showRepeatedWords) ...[
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final w in repeated)
+                                Chip(
+                                    label: Text('${w['word']} × ${w['count']}')),
+                            ],
                           ),
                         ],
-                      ),
-                    ),
-                  ],
+                      ],
+                    );
+                  }),
                 ],
               ),
             ),
@@ -743,32 +754,4 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // Shows "word × count" chips, but collapses long lists behind a "…" chip so
-  // they don't take over the screen. Tapping it expands / collapses the rest.
-  Widget _collapsibleWordChips({
-    required List<Map<String, dynamic>> words,
-    required bool expanded,
-    required VoidCallback onToggle,
-    int limit = 8,
-  }) {
-    final collapsed = !expanded && words.length > limit;
-    final shown = collapsed ? words.take(limit).toList() : words;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final w in shown)
-          Chip(label: Text('${w['word']} × ${w['count']}')),
-        if (words.length > limit)
-          ActionChip(
-            avatar: Icon(
-              collapsed ? Icons.more_horiz : Icons.expand_less,
-              size: 18,
-            ),
-            label: Text(collapsed ? '+${words.length - limit}' : 'Show less'),
-            onPressed: onToggle,
-          ),
-      ],
-    );
-  }
 }

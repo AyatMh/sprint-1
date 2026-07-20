@@ -78,32 +78,32 @@ void main() {
   });
 
   group('SilenceAnalyzer', () {
-    test('detects a single mid-answer gap longer than 2s', () {
-      // Three spoken segments with a 3.0s gap between #2 and #3.
+    test('detects a single mid-answer gap longer than 7s', () {
+      // Three spoken segments with an 8.0s gap between #2 and #3.
       final segments = [
         TranscriptSegment(start: 0.0, end: 4.0, text: 'first part'),
         TranscriptSegment(start: 4.5, end: 8.0, text: 'second part'),
-        TranscriptSegment(start: 11.0, end: 15.0, text: 'third part'),
+        TranscriptSegment(start: 16.0, end: 20.0, text: 'third part'),
       ];
       final result = SilenceAnalyzer.analyze(
         segments: segments,
-        totalDurationSeconds: 15.0,
+        totalDurationSeconds: 20.0,
       );
-      expect(result.count, 1); // the 0.5s gap is ignored, the 3.0s gap counts
-      expect(result.longestSilenceSeconds, closeTo(3.0, 0.001));
-      expect(result.totalSilenceSeconds, closeTo(3.0, 0.001));
+      expect(result.count, 1); // the 0.5s gap is ignored, the 8.0s gap counts
+      expect(result.longestSilenceSeconds, closeTo(8.0, 0.001));
+      expect(result.totalSilenceSeconds, closeTo(8.0, 0.001));
     });
 
     test('detects a long pause before the speaker starts', () {
       final segments = [
-        TranscriptSegment(start: 5.0, end: 9.0, text: 'late start'),
+        TranscriptSegment(start: 8.0, end: 12.0, text: 'late start'),
       ];
       final result = SilenceAnalyzer.analyze(
         segments: segments,
-        totalDurationSeconds: 9.0,
+        totalDurationSeconds: 12.0,
       );
       expect(result.count, 1);
-      expect(result.longestSilenceSeconds, closeTo(5.0, 0.001));
+      expect(result.longestSilenceSeconds, closeTo(8.0, 0.001));
     });
 
     test('reports no silences for continuous speech', () {
