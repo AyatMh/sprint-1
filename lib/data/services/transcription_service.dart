@@ -30,7 +30,11 @@ class TranscriptionService {
   Future<TranscriptionResult> transcribe({
     required String filePath,
     String language = 'en',
+    double trimStartSeconds = 0,
   }) async {
+    // Leave a 1s safety margin so a slightly-early answer never gets clipped.
+    final trimSeconds =
+        trimStartSeconds > 1 ? trimStartSeconds - 1 : 0.0;
     final apiKey = dotenv.env['OPENAI_API_KEY'];
     if (apiKey == null || apiKey.isEmpty) {
       throw Exception('OPENAI_API_KEY missing in .env file');
@@ -47,10 +51,16 @@ class TranscriptionService {
     // original file when extraction isn't available.
     String uploadPath = filePath;
     String? extractedPath;
-    extractedPath = await AudioExtractor.extractAudio(filePath);
+    extractedPath = await AudioExtractor.extractAudio(
+      filePath,
+      trimStartSeconds: trimSeconds,
+    );
     if (extractedPath != null) {
       uploadPath = extractedPath;
     }
+    // Only actually trimmed if extraction succeeded and applied it; the
+    // fallback (uploading the untouched video) has no offset to undo.
+    final appliedTrim = extractedPath != null ? trimSeconds : 0.0;
 
     final uploadSize = await File(uploadPath).length();
     if (uploadSize > _maxUploadBytes) {
@@ -96,10 +106,13 @@ class TranscriptionService {
 
       final data = response.data as Map<String, dynamic>;
       final segmentsRaw = data['segments'] as List? ?? [];
+      // Shift timestamps back onto the original video's timeline so every
+      // downstream consumer (silence detection, AI-coach question splitting)
+      // keeps working as if the whole file had been sent, trim included.
       final segments = segmentsRaw
           .map((s) => TranscriptSegment(
-                start: (s['start'] ?? 0).toDouble(),
-                end: (s['end'] ?? 0).toDouble(),
+                start: (s['start'] ?? 0).toDouble() + appliedTrim,
+                end: (s['end'] ?? 0).toDouble() + appliedTrim,
                 text: (s['text'] ?? '').toString().trim(),
               ))
           .toList();
@@ -108,7 +121,7 @@ class TranscriptionService {
         text: data['text'] ?? '',
         segments: segments,
         language: data['language'] ?? language,
-        duration: (data['duration'] ?? 0).toDouble(),
+        duration: (data['duration'] ?? 0).toDouble() + appliedTrim,
       );
     } on DioException catch (e) {
       final code = e.response?.statusCode;

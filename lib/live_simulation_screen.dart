@@ -59,9 +59,21 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
   int _questionIndex = 0;
   bool get _hasQuestions => widget.questions.isNotEmpty;
 
+  // Elapsed video time (seconds since actual recording start, NOT since
+  // calibration ends) at which each question was shown. Saved alongside the
+  // recording so the analysis screen can split the transcript per question.
+  final Stopwatch _videoClock = Stopwatch();
+  final List<double> _questionStartSeconds = [];
+
+  // Elapsed video time (seconds) when calibration finished, i.e. when the
+  // user was expected to start actually speaking. Every recording has a few
+  // seconds of near-silence before this point.
+  double _speechStartSeconds = 0.0;
+
   void _nextQuestion() {
     if (_questionIndex < widget.questions.length - 1) {
       setState(() => _questionIndex++);
+      _questionStartSeconds.add(_videoClock.elapsedMilliseconds / 1000.0);
     }
   }
 
@@ -163,6 +175,9 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
         // the live confidence/eye-contact/posture analysis doing nothing.
         await recordingProv.startRecording(onImage: _processCameraImage);
         _sessionActive = true;
+        _videoClock
+          ..reset()
+          ..start();
 
         // Tell the user what's about to happen before the countdown runs, so
         // they know to sit straight and look at the camera for calibration.
@@ -256,6 +271,11 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
       ..start();
     _lastConfMs = 0;
     _lastPostMs = 0;
+
+    _speechStartSeconds = _videoClock.elapsedMilliseconds / 1000.0;
+    if (_hasQuestions) {
+      _questionStartSeconds.add(_speechStartSeconds);
+    }
 
     if (!mounted) return;
     setState(() => _calibrating = false);
@@ -721,11 +741,24 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
     String? localFilePath;
     String? recordingId;
     if (userId != null) {
+      final aiCoachQuestions = _hasQuestions
+          ? [
+              for (var i = 0;
+                  i < widget.questions.length && i < _questionStartSeconds.length;
+                  i++)
+                {
+                  'question': widget.questions[i].text,
+                  'startSeconds': _questionStartSeconds[i],
+                },
+            ]
+          : null;
       final saved = await recordingProv.stopAndSave(
         userId,
         name: _recordingName,
         category: _recordingCategory,
         usedAiCoach: widget.questions.isNotEmpty,
+        aiCoachQuestions: aiCoachQuestions,
+        speechStartSeconds: _speechStartSeconds,
       );
       localFilePath = saved?.file.path;
       recordingId = saved?.recordingId;
@@ -810,6 +843,7 @@ class _LiveSimulationScreenState extends State<LiveSimulationScreen> {
     _timer?.cancel();
     _calibTimer?.cancel();
     _clock.stop();
+    _videoClock.stop();
     _faceDetector.close();
     _poseDetector.close();
     super.dispose();

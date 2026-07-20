@@ -32,6 +32,53 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     _recording = widget.recording;
   }
 
+  // AI coach recordings with recorded question timestamps and a transcribed,
+  // segmented transcript show a per-question breakdown instead of one wall
+  // of text. Older AI coach recordings (saved before this existed) or ones
+  // still missing segments fall back to the plain transcript.
+  bool get _showQnA =>
+      _recording.usedAiCoach &&
+      (_recording.aiCoachQuestions?.isNotEmpty ?? false) &&
+      (_recording.transcriptSegments?.isNotEmpty ?? false);
+
+  // Splits the transcript's segments across the recorded questions by time:
+  // each segment belongs to whichever question was on screen when it was
+  // spoken (i.e. the last question whose timestamp is <= the segment start).
+  List<Widget> _buildQnaBlocks() {
+    final questions = _recording.aiCoachQuestions!;
+    final segments = _recording.transcriptSegments!;
+    final blocks = <Widget>[];
+    for (var i = 0; i < questions.length; i++) {
+      final qStart = (questions[i]['startSeconds'] as num).toDouble();
+      final qEnd = i + 1 < questions.length
+          ? (questions[i + 1]['startSeconds'] as num).toDouble()
+          : double.infinity;
+      final answer = segments
+          .where((s) => s.start >= qStart && s.start < qEnd)
+          .map((s) => s.text.trim())
+          .where((t) => t.isNotEmpty)
+          .join(' ');
+      blocks.add(Padding(
+        padding: EdgeInsets.only(bottom: i < questions.length - 1 ? 18 : 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Q${i + 1}: ${questions[i]['question']}',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              answer.isNotEmpty ? answer : 'No answer detected.',
+              style: const TextStyle(fontSize: 16, height: 1.5),
+            ),
+          ],
+        ),
+      ));
+    }
+    return blocks;
+  }
+
   // Sends the recording's analysis to the AI coach and stores the returned
   // tips (persisted to Firestore so they aren't regenerated every visit).
   Future<void> _generateTips() async {
@@ -83,6 +130,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       final result = await service.transcribe(
         filePath: _recording.localPath,
         language: 'en',
+        trimStartSeconds: _recording.speechStartSeconds,
       );
 
       setState(() => _statusMessage = 'Analyzing speech patterns...');
@@ -648,7 +696,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                           color: Colors.blueGrey),
                       const SizedBox(width: 8),
                       Text(
-                        'Silences (gaps > 2s)',
+                        'Silences (gaps > ${SilenceAnalyzer.silenceThresholdSeconds.toInt()}s)',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ],
@@ -700,7 +748,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
           const SizedBox(height: 16),
 
-          // ============ TRANSCRIPT CARD ============
+          // ============ TRANSCRIPT / Q&A CARD ============
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -709,10 +757,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.article_outlined),
+                      Icon(_showQnA ? Icons.forum_outlined : Icons.article_outlined),
                       const SizedBox(width: 8),
                       Text(
-                        'Transcript',
+                        _showQnA ? 'Questions & Answers' : 'Transcript',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const Spacer(),
@@ -726,10 +774,13 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    _recording.transcript ?? '',
-                    style: const TextStyle(fontSize: 16, height: 1.5),
-                  ),
+                  if (_showQnA)
+                    ..._buildQnaBlocks()
+                  else
+                    Text(
+                      _recording.transcript ?? '',
+                      style: const TextStyle(fontSize: 16, height: 1.5),
+                    ),
                 ],
               ),
             ),

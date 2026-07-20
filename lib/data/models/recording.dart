@@ -71,6 +71,19 @@ class Recording {
   // to a regular, prompt-free take). Set once at recording time.
   final bool usedAiCoach;
 
+  // For AI coach recordings: each question asked plus the elapsed video time
+  // (in seconds) it was shown at, e.g. {'question': '...', 'startSeconds': 12.4}.
+  // Used to split the transcript into per-question answers on the analysis
+  // screen instead of showing one undifferentiated wall of text.
+  final List<Map<String, dynamic>>? aiCoachQuestions;
+
+  // Elapsed video time (seconds) at which calibration finished and the user
+  // was expected to start actually speaking. Every recording has a few
+  // seconds of near-silence before this (the "get ready" prompt + pose
+  // calibration), which trips up Whisper into dropping the first words right
+  // after it — transcription skips past this point before uploading.
+  final double speechStartSeconds;
+
   Recording({
     required this.id,
     required this.userId,
@@ -105,6 +118,8 @@ class Recording {
     this.aiTips,
     this.aiTipsAt,
     this.usedAiCoach = false,
+    this.aiCoachQuestions,
+    this.speechStartSeconds = 0.0,
   });
 
   bool get hasTranscript => transcript != null && transcript!.isNotEmpty;
@@ -170,6 +185,9 @@ class Recording {
       storagePath: storagePath ?? this.storagePath,
       aiTips: aiTips ?? this.aiTips,
       aiTipsAt: aiTipsAt ?? this.aiTipsAt,
+      usedAiCoach: usedAiCoach,
+      aiCoachQuestions: aiCoachQuestions,
+      speechStartSeconds: speechStartSeconds,
     );
   }
 
@@ -182,6 +200,8 @@ class Recording {
         'name': name,
         'category': category,
         'usedAiCoach': usedAiCoach,
+        'speechStartSeconds': speechStartSeconds,
+        if (aiCoachQuestions != null) 'aiCoachQuestions': aiCoachQuestions,
         if (transcript != null) 'transcript': transcript,
         if (transcriptSegments != null)
           'transcriptSegments':
@@ -230,6 +250,10 @@ class Recording {
       name: data['name'] ?? '',
       category: data['category'] ?? '',
       usedAiCoach: data['usedAiCoach'] as bool? ?? false,
+      aiCoachQuestions: (data['aiCoachQuestions'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e))
+          .toList(),
+      speechStartSeconds: (data['speechStartSeconds'] as num?)?.toDouble() ?? 0.0,
       transcript: data['transcript'],
       transcriptSegments: segmentsRaw
           ?.map((m) => TranscriptSegment.fromMap(Map<String, dynamic>.from(m)))

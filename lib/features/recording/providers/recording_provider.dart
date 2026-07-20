@@ -75,6 +75,8 @@ class RecordingProvider extends ChangeNotifier {
     required String name,
     required String category,
     bool usedAiCoach = false,
+    List<Map<String, dynamic>>? aiCoachQuestions,
+    double speechStartSeconds = 0.0,
   }) async {
     if (_state != RecordingState.recording) return null;
     _ticker?.cancel();
@@ -91,6 +93,8 @@ class RecordingProvider extends ChangeNotifier {
         name: name,
         category: category,
         usedAiCoach: usedAiCoach,
+        aiCoachQuestions: aiCoachQuestions,
+        speechStartSeconds: speechStartSeconds,
       );
       _recordStartTime = null;
       _setState(RecordingState.ready);

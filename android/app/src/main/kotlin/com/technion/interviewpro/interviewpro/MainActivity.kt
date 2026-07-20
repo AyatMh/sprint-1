@@ -20,13 +20,14 @@ class MainActivity : FlutterActivity() {
                     "extractAudio" -> {
                         val input = call.argument<String>("inputPath")
                         val output = call.argument<String>("outputPath")
+                        val trimStartMs = (call.argument<Number>("trimStartMs"))?.toLong() ?: 0L
                         if (input == null || output == null) {
                             result.error("ARGS", "inputPath and outputPath are required", null)
                             return@setMethodCallHandler
                         }
                         Thread {
                             try {
-                                extractAudio(input, output)
+                                extractAudio(input, output, trimStartMs)
                                 runOnUiThread { result.success(output) }
                             } catch (e: Exception) {
                                 runOnUiThread {
@@ -42,7 +43,9 @@ class MainActivity : FlutterActivity() {
 
     // Demuxes the AAC audio track out of an MP4 into an .m4a container
     // without re-encoding (MediaExtractor -> MediaMuxer). Fast and lossless.
-    private fun extractAudio(inputPath: String, outputPath: String) {
+    // trimStartMs, when > 0, seeks past that much lead-in (e.g. the silent
+    // calibration countdown) so it's never included in the extracted audio.
+    private fun extractAudio(inputPath: String, outputPath: String, trimStartMs: Long) {
         val extractor = MediaExtractor()
         extractor.setDataSource(inputPath)
 
@@ -63,6 +66,11 @@ class MainActivity : FlutterActivity() {
         }
 
         extractor.selectTrack(audioTrackIndex)
+        val trimStartUs = trimStartMs * 1000L
+        if (trimStartUs > 0) {
+            extractor.seekTo(trimStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC_SAMPLE)
+        }
+
         val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         val muxerTrack = muxer.addTrack(audioFormat)
         muxer.start()
@@ -78,7 +86,12 @@ class MainActivity : FlutterActivity() {
         while (true) {
             info.size = extractor.readSampleData(buffer, 0)
             if (info.size < 0) break
-            info.presentationTimeUs = extractor.sampleTime
+            val sampleTimeUs = extractor.sampleTime
+            info.presentationTimeUs = if (trimStartUs > 0) {
+                maxOf(0L, sampleTimeUs - trimStartUs)
+            } else {
+                sampleTimeUs
+            }
             info.flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) {
                 MediaCodec.BUFFER_FLAG_KEY_FRAME
             } else {

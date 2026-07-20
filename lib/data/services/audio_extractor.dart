@@ -12,7 +12,12 @@ class AudioExtractor {
 
   /// Returns the path of the extracted .m4a, or null if extraction isn't
   /// available on this platform or failed (callers fall back to the video).
-  static Future<String?> extractAudio(String videoPath) async {
+  /// [trimStartSeconds], if > 0, skips that much silent lead-in (e.g. the
+  /// calibration countdown) so Whisper doesn't drop the first words spoken.
+  static Future<String?> extractAudio(
+    String videoPath, {
+    double trimStartSeconds = 0,
+  }) async {
     if (!Platform.isAndroid) return null;
     try {
       final tmpDir = await getTemporaryDirectory();
@@ -21,6 +26,7 @@ class AudioExtractor {
       final result = await _channel.invokeMethod<String>('extractAudio', {
         'inputPath': videoPath,
         'outputPath': outputPath,
+        'trimStartMs': (trimStartSeconds * 1000).round(),
       });
       if (result == null) return null;
       final out = File(result);

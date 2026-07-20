@@ -15,6 +15,8 @@ class RecordingRepository {
     required String name,
     required String category,
     bool usedAiCoach = false,
+    List<Map<String, dynamic>>? aiCoachQuestions,
+    double speechStartSeconds = 0.0,
   }) async {
     final docRef = await _userRecordings(userId).add({
       'userId': userId,
@@ -24,6 +26,8 @@ class RecordingRepository {
       'name': name,
       'category': category,
       'usedAiCoach': usedAiCoach,
+      'aiCoachQuestions': ?aiCoachQuestions,
+      'speechStartSeconds': speechStartSeconds,
       'createdAt': FieldValue.serverTimestamp(),
     });
     return docRef.id;
